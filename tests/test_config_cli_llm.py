@@ -177,3 +177,20 @@ def test_claude_model_skips_fallbacks_for_models_without_them(tmp_path):
 def test_package_has_no_stray_paths():
     root = Path(__file__).resolve().parents[1]
     assert (root / "tinyco" / "__init__.py").exists()
+
+
+def test_pricing_override_from_company_toml(tmp_path):
+    import tomllib
+
+    text = """
+[company]
+name = "P"
+[company.pricing."my-model"]
+input = 1.0
+output = 2.0
+[agents.a]
+model = "my-model"
+"""
+    c = parse(tomllib.loads(text), tmp_path)
+    overrides = c.extra.get("pricing")
+    assert pricing.cost("my-model", {"input": 1_000_000, "output": 1_000_000}, overrides) == pytest.approx(3.0)

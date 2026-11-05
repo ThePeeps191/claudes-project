@@ -234,6 +234,56 @@ def cmd_org(args) -> int:
     return 0
 
 
+def cmd_dashboard(args) -> int:
+    import webbrowser
+
+    from .dashboard import serve
+
+    company = load(Path(args.dir) if args.dir else None)
+    try:
+        server = serve(company, port=args.port)
+    except OSError as e:
+        print(f"tinyco: can't listen on port {args.port}: {e}", file=sys.stderr)
+        return 1
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    print(f"Dashboard for {company.name}: {url}  (Ctrl+C to stop)")
+    if not args.no_open:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+def cmd_demo(args) -> int:
+    from .demo import run_demo
+
+    style = Style(use_color())
+    target = Path(args.path)
+    print(style.bold("tinyco demo") + style.dim(" — a scripted run: the model is a recording, so no API key is needed"))
+    print(style.dim("and nothing is billed. Everything else is real: files are written, commands and checks run,"))
+    print(style.dim("and the company rules apply exactly as they do with Claude.\n"))
+    try:
+        office, _ = run_demo(target, delay=0 if args.fast else 0.35, force=args.force, feed=Feed(style))
+    except FileExistsError as e:
+        print(f"tinyco: {e}", file=sys.stderr)
+        return 1
+    print()
+    print(board(office, style))
+    print()
+    rel = target if not target.is_absolute() else target
+    print("Look around:")
+    print(f"  cd {rel} && tinyco status       # the board")
+    print("  tinyco dashboard                  # the same company in your browser")
+    print("  ls workspace/                     # the code the agents wrote")
+    print()
+    print('Run a real company: tinyco init && tinyco goal "..." && tinyco run')
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="tinyco",
@@ -308,6 +358,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("org", help="show the org chart")
     s.set_defaults(fn=cmd_org)
+
+    s = sub.add_parser("dashboard", help="open a live dashboard in your browser")
+    s.add_argument("--port", type=int, default=8321)
+    s.add_argument("--no-open", action="store_true", help="don't open a browser")
+    s.set_defaults(fn=cmd_dashboard)
+
+    s = sub.add_parser("demo", help="watch a scripted company build something (no API key needed)")
+    s.add_argument("path", nargs="?", default="tinyco-demo", help="where to create the demo company")
+    s.add_argument("--fast", action="store_true", help="no pauses")
+    s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
+    s.set_defaults(fn=cmd_demo)
     return p
 
 
