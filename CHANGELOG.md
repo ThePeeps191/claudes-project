@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixes from a third independent review: MCP tokens are stripped from every agent command and check; a Claude Code agent with an unset MCP token stops with a clear error instead of being charged; one verdict per criterion (duplicates refused), `T2`-style criterion numbers accepted; verdicts on tasks without criteria refused; empty MCP tool allowlists rejected; adding criteria via `update_task` defaults the reviewer; a reviewer changed during review is woken; review briefs ask for per-criterion verdicts; superseded indexes dropped on upgrade.
+
 - Remote MCP servers per agent (`[[agents.<name>.mcp]]`: url, token from the environment, optional tool allowlist) via the Claude API MCP connector, and for Claude Code agents via their MCP config; calls appear in the feed.
 
 - Acceptance criteria: plain-language definition of done for business work (`-a/--criteria`, `criteria` on tasks); reviewers must give a verdict per criterion and can only approve when all pass; rejections carry the failing criteria.

@@ -60,7 +60,7 @@ TOOLS: list[dict] = [
                 },
                 "reviewer": {
                     **_STR,
-                    "description": "Who judges the work (an agent or 'human'). Defaults to you when there are criteria.",
+                    "description": "Who judges the work (an agent or 'human'). Defaults to you when there are criteria, unless you assign the task to yourself.",
                 },
             },
             ["parent_id", "title", "description", "assignee"],
@@ -456,7 +456,7 @@ class Toolbox:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                env=child_env(),
+                env=child_env(self.office.company),
                 stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as e:

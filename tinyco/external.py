@@ -55,6 +55,9 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
         raise ModelError(
             f"`{agent.command}` not found on PATH (install Claude Code, or set agents.{agent.name}.command)", fatal=True
         )
+    for m in agent.mcp:
+        if m.get("token_env") and not os.environ.get(m["token_env"]):
+            raise ModelError(f"{agent.name}'s MCP server {m['name']!r} needs ${m['token_env']} to be set", fatal=True)
 
     spec = launch_spec(company.root, agent.name, task.id, allow_shell=True)
     with tempfile.TemporaryDirectory(prefix="tinyco-") as tmp:

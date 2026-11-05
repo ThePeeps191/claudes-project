@@ -163,6 +163,8 @@ def _mcp_servers(agent: str, raw, runtime: str) -> list[dict]:
         if tools is not None:
             if not isinstance(tools, list) or not all(isinstance(t, str) and t for t in tools):
                 raise ConfigError(f"{where}.tools must be a list of tool names")
+            if not tools:
+                raise ConfigError(f"{where}.tools is empty; list the tools to allow, or leave it out to allow all")
             if runtime == "claude-code":
                 raise ConfigError(f"{where}.tools: per-tool allowlists only work for API agents, not claude-code")
         out.append({"name": name, "url": url, "token_env": token_env, "tools": tools})
