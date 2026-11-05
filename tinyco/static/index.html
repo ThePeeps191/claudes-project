@@ -128,9 +128,11 @@ body.snapshot #new-goal, body.snapshot .inbox button, body.snapshot .inbox input
   <h3 style="margin:0">New goal</h3>
   <label>What should the company do?</label><input id="g-title" placeholder="Build a CLI that converts CSV to JSON">
   <label>Details (optional)</label><textarea id="g-desc"></textarea>
-  <label>Checks — one shell command per line; all must exit 0 for the goal to be done</label>
+  <label>Acceptance criteria — one per line; the reviewer judges each</label>
+  <textarea id="g-criteria" placeholder="Names 3 competitors with current prices and sources&#10;Landing page states the price and has a signup form"></textarea>
+  <label>Checks (optional) — shell commands that must exit 0</label>
   <textarea id="g-checks" placeholder="python -m pytest -q"></textarea>
-  <label>Final review by</label><select id="g-review"><option value="">nobody (checks only)</option><option value="human">me</option></select>
+  <label>Final review by</label><select id="g-review"><option value="human">me</option><option value="">nobody (checks only)</option></select>
   <div class="row"><button id="g-cancel">Cancel</button><button class="primary" id="g-save">Create goal</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
@@ -256,12 +258,16 @@ function describe(e) {
     case "goal_created": return ["", ["◆ goal ", t, " ", d.title, " → ", who(d.assignee)]];
     case "wake": return ["", ["▸ ", A(), ` wakes on ${t} (${(d.reasons || []).join(", ")})`]];
     case "said": return ["dim", ["  “", (d.text || "").slice(0, 220), "”"]];
-    case "task_created": return ["", ["＋ ", A(), " → ", who(d.assignee), ` ${t} ${d.title}`]];
+    case "task_created": return ["", ["＋ ", A(), " → ", who(d.assignee), ` ${t} ${d.title}`,
+      (d.criteria || []).length ? ` · ${d.criteria.length} criteria` : ""]];
     case "file_written": return ["dim", ["✎ ", A(), ` ${d.created ? "created" : "edited"} ${d.path}`]];
     case "command_done": return [d.exit === 0 ? "" : "bad", ["$ ", A(), ` ${(d.command || "").slice(0, 120)} `, d.exit === 0 ? "✓" : `✗ exit ${d.exit}`]];
-    case "checks_run": return [d.passed ? "good" : "bad", [d.passed ? "✔ checks passed on " : "✘ checks failed on ", t]];
+    case "checks_run": return !(d.results || []).length ? ["dim", ["↑ ", A(), ` submitted ${t}`]]
+      : [d.passed ? "good" : "bad", [d.passed ? "✔ checks passed on " : "✘ checks failed on ", t]];
     case "review_requested": return ["", [`⧗ ${t} waiting for review by `, who(d.reviewer)]];
-    case "reviewed": return [d.approved ? "good" : "bad", [A(), d.approved ? ` approved ${t}` : ` requested changes on ${t}: ${(d.notes || "").slice(0, 160)}`]];
+    case "reviewed": return [d.approved ? "good" : "bad", [A(), d.approved
+      ? ` approved ${t}${(d.verdicts || []).length ? ` (${d.verdicts.length}/${d.verdicts.length} criteria met)` : ""}`
+      : ` requested changes on ${t}: ${(d.notes || "").slice(0, 160)}`]];
     case "task_done": return ["good", [`✓ ${t} done`]];
     case "goal_done": return ["star", [`★ goal ${t} complete: ${d.title}`]];
     case "escalated": return ["bad", [`⚠ ${t} escalated${d.to ? " to " + d.to : ""}: ${d.why}`]];
@@ -316,7 +322,9 @@ async function showTask(id) {
     t.blocked_on ? h("pre", { style: "color:var(--red)" }, "Blocked: " + t.blocked_on) : null,
     h("h4", {}, "Description"), h("pre", {}, t.description || "—"),
     h("h4", {}, "Definition of done"),
-    t.checks.length ? h("ul", {}, t.checks.map((c) => h("li", {}, h("code", {}, c)))) : h("div", { style: "color:var(--muted)" }, "No checks; the reviewer decides."),
+    (t.criteria || []).length ? h("ol", {}, t.criteria.map((c) => h("li", {}, c))) : null,
+    t.checks.length ? h("ul", {}, t.checks.map((c) => h("li", {}, h("code", {}, c)))) : null,
+    !t.checks.length && !(t.criteria || []).length ? h("div", { style: "color:var(--muted)" }, "The reviewer decides.") : null,
     t.summary ? [h("h4", {}, "Submission"), h("pre", {}, t.summary)] : null,
     kids.length ? [h("h4", {}, "Subtasks"), h("ul", {}, kids.map((k) => h("li", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); showTask(k.id); } }, `T${k.id} ${k.title}`), " ", h("span", { class: "chip " + k.status }, k.status))))] : null,
     h("h4", {}, "Activity"),
@@ -333,8 +341,9 @@ $("new-goal").onclick = () => { $("modal").style.display = "grid"; $("g-title").
 $("g-cancel").onclick = () => $("modal").style.display = "none";
 $("g-save").onclick = async () => {
   const title = $("g-title").value.trim(); if (!title) return toast("Give the goal a title");
-  const ok = await post("/api/goal", { title, description: $("g-desc").value, checks: $("g-checks").value.split("\n"), reviewer: $("g-review").value });
-  if (ok) { $("modal").style.display = "none"; ["g-title", "g-desc", "g-checks"].forEach((i) => $(i).value = ""); }
+  const ok = await post("/api/goal", { title, description: $("g-desc").value, checks: $("g-checks").value.split("\n"),
+    criteria: $("g-criteria").value.split("\n"), reviewer: $("g-review").value });
+  if (ok) { $("modal").style.display = "none"; ["g-title", "g-desc", "g-checks", "g-criteria"].forEach((i) => $(i).value = ""); }
 };
 
 async function refresh() {

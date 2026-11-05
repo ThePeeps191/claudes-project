@@ -66,6 +66,7 @@ def snapshot(office: Office) -> dict:
                 "status": t.status,
                 "checks": t.checks,
                 "reviewer": t.reviewer,
+                "criteria": t.criteria,
                 "attempts": t.attempts,
                 "summary": t.summary,
                 "blocked_on": t.blocked_on,
@@ -196,8 +197,13 @@ def make_handler(office: Office, lock: threading.Lock):
                 with lock:
                     if path == "/api/goal":
                         checks = [c for c in body.get("checks", []) if isinstance(c, str) and c.strip()]
+                        criteria = [c for c in body.get("criteria", []) if isinstance(c, str) and c.strip()]
                         t = office.start_goal(
-                            str(body["title"]), str(body.get("description", "")), checks, body.get("reviewer") or None
+                            str(body["title"]),
+                            str(body.get("description", "")),
+                            checks,
+                            body.get("reviewer") or None,
+                            criteria,
                         )
                         msg = f"Created {t.ref}. Start the company with: tinyco run"
                     elif path == "/api/reply":

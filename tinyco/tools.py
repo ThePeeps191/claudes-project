@@ -32,9 +32,11 @@ TOOLS: list[dict] = [
         "name": "create_task",
         "description": (
             "Delegate part of a task you own to yourself or someone who reports to you. Every task needs a "
-            "definition of done: shell check commands that exit 0 only when the work is right (run from the "
-            "workspace root), and/or a reviewer. The assignee is woken automatically and you are woken when "
-            "the subtask is done or fails."
+            "definition of done. For most work (research, writing, plans, design, outreach) that's acceptance "
+            "criteria: concrete, checkable statements a reviewer judges one by one (you review by default). "
+            "Where something can be verified mechanically (tests, a file exists, a page contains the price), add "
+            "check commands that exit 0 only when it's right. The assignee is woken automatically and you are "
+            "woken when the subtask is done or fails."
         ),
         "input_schema": _obj(
             {
@@ -45,13 +47,20 @@ TOOLS: list[dict] = [
                     "description": "What to do, relevant context, constraints, and where files should go.",
                 },
                 "assignee": {**_STR, "description": "Agent name."},
+                "criteria": {
+                    **_STRS,
+                    "description": (
+                        "Acceptance criteria, each specific enough to pass or fail, e.g. 'Compares at least 3 "
+                        "competitors with their current prices and a source link for each'."
+                    ),
+                },
                 "checks": {
                     **_STRS,
-                    "description": "Shell commands that must all exit 0, e.g. ['python -m pytest -q tests/test_parser.py'].",
+                    "description": "Shell commands that must all exit 0, e.g. ['python -m pytest -q', 'test -f site/index.html'].",
                 },
                 "reviewer": {
                     **_STR,
-                    "description": "Optional agent (or 'human') who must approve the work after checks pass.",
+                    "description": "Who judges the work (an agent or 'human'). Defaults to you when there are criteria.",
                 },
             },
             ["parent_id", "title", "description", "assignee"],
@@ -74,12 +83,28 @@ TOOLS: list[dict] = [
     },
     {
         "name": "review",
-        "description": "Approve or reject work you were asked to review. Rejecting sends it back with your notes.",
+        "description": (
+            "Approve or reject work you were asked to review. If the task has acceptance criteria, give a verdict "
+            "on every one; it can only be approved when all pass. Rejecting sends the work back with the failing "
+            "verdicts and your notes."
+        ),
         "input_schema": _obj(
             {
                 "task_id": _INT,
                 "approve": {"type": "boolean"},
-                "notes": {**_STR, "description": "What's wrong and what to change (required when rejecting)."},
+                "verdicts": {
+                    "type": "array",
+                    "description": "One per acceptance criterion (numbered as in the task).",
+                    "items": _obj(
+                        {
+                            "criterion": {**_INT, "description": "Criterion number, starting at 1."},
+                            "passed": {"type": "boolean"},
+                            "reason": {**_STR, "description": "The evidence: what you checked and found."},
+                        },
+                        ["criterion", "passed", "reason"],
+                    ),
+                },
+                "notes": {**_STR, "description": "Anything else the assignee should know (required when rejecting)."},
             },
             ["task_id", "approve", "notes"],
         ),
@@ -96,6 +121,7 @@ TOOLS: list[dict] = [
                 "assignee": _STR,
                 "description": _STR,
                 "checks": _STRS,
+                "criteria": _STRS,
                 "reviewer": _STR,
                 "cancel": {"type": "boolean"},
             },
@@ -285,19 +311,25 @@ class Toolbox:
 
     # -- org tools ----------------------------------------------------------------
 
-    def t_create_task(self, parent_id, title, description, assignee, checks=None, reviewer=None) -> str:
-        return self.office.create_task(self.agent, _int(parent_id), title, assignee, description, checks, reviewer)
+    def t_create_task(self, parent_id, title, description, assignee, checks=None, reviewer=None, criteria=None) -> str:
+        return self.office.create_task(
+            self.agent, _int(parent_id), title, assignee, description, checks, reviewer, criteria
+        )
 
     def t_submit(self, task_id, summary) -> str:
         return self.office.submit(self.agent, _int(task_id), summary)
 
-    def t_review(self, task_id, approve, notes) -> str:
-        if not approve and not notes.strip():
+    def t_review(self, task_id, approve, notes, verdicts=None) -> str:
+        if not approve and not notes.strip() and not any(not v.get("passed") for v in verdicts or []):
             raise OfficeError("explain what needs to change when rejecting")
-        return self.office.review(self.agent, _int(task_id), approve, notes)
+        return self.office.review(self.agent, _int(task_id), approve, notes, verdicts)
 
-    def t_update_task(self, task_id, assignee=None, description=None, checks=None, reviewer=None, cancel=False) -> str:
-        return self.office.update_task(self.agent, _int(task_id), assignee, description, checks, reviewer, cancel)
+    def t_update_task(
+        self, task_id, assignee=None, description=None, checks=None, reviewer=None, cancel=False, criteria=None
+    ) -> str:
+        return self.office.update_task(
+            self.agent, _int(task_id), assignee, description, checks, reviewer, cancel, criteria
+        )
 
     def t_comment(self, task_id, text, notify=None) -> str:
         return self.office.comment(self.agent, _int(task_id), text, notify)

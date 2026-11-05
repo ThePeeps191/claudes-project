@@ -107,7 +107,10 @@ class Feed:
             msg = s.dim(f"  “{_one_line(d.get('text', ''), 200)}”")
         elif k == "task_created":
             checks = d.get("checks") or []
-            extra = f"checks: {', '.join(checks)}" if checks else ""
+            n_crit = len(d.get("criteria") or [])
+            extra = f"{n_crit} criteria" if n_crit else ""
+            if checks:
+                extra += (" · " if extra else "") + f"checks: {', '.join(checks)}"
             if d.get("reviewer"):
                 extra += (" · " if extra else "") + f"review: {d['reviewer']}"
             msg = f"  ＋ {who} → {s.agent(d.get('assignee'))}  {t} {d.get('title', '')}" + (
@@ -122,15 +125,20 @@ class Feed:
         elif k == "checks_run":
             res = d.get("results", [])
             n_ok = sum(1 for r in res if r.get("exit") == 0)
-            if d.get("passed"):
+            if not res:
+                msg = f"  ↑ {who} submitted {t}"
+            elif d.get("passed"):
                 msg = f"  {s.green('✔ checks passed')} {s.dim(f'({n_ok}/{len(res)})')} on {t}"
             else:
                 msg = f"  {s.red('✘ checks failed')} {s.dim(f'({n_ok}/{len(res)})')} on {t}"
         elif k == "review_requested":
             msg = f"  ⧗ {t} waiting for review by {s.agent(d.get('reviewer'))}"
         elif k == "reviewed":
+            vs = d.get("verdicts") or []
             if d.get("approved"):
-                msg = f"  {s.green('✔')} {who} approved {t}"
+                msg = f"  {s.green('✔')} {who} approved {t}" + (
+                    s.dim(f" ({len(vs)}/{len(vs)} criteria met)") if vs else ""
+                )
             else:
                 msg = f"  {s.red('↺')} {who} requested changes on {t}: {s.dim(_one_line(d.get('notes', ''), 120))}"
         elif k == "task_done":

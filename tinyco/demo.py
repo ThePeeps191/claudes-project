@@ -226,12 +226,20 @@ class Paced:
         return self.model.respond(**kw)
 
 
-def run_demo(target: Path, delay: float = 0.4, force: bool = False, feed=None) -> tuple[Office, ScriptedModel]:
+def run_demo(
+    target: Path, delay: float = 0.4, force: bool = False, feed=None, kind: str = "launch"
+) -> tuple[Office, ScriptedModel]:
+    """Run a scripted company in ``target``: ``launch`` (business, the default) or ``code``."""
     target = target.resolve()
     if target.exists() and any(target.iterdir()) and not force:
         raise FileExistsError(f"{target} is not empty (use --force to reuse it)")
     target.mkdir(parents=True, exist_ok=True)
-    text = STARTUP.replace("{name}", "Demo Co").replace('shell = "ask"', 'shell = "allow"')
+    if kind == "launch":
+        from .templates import LAUNCH
+
+        text = LAUNCH.replace("{name}", "Cairn Labs").replace('shell = "ask"', 'shell = "allow"')
+    else:
+        text = STARTUP.replace("{name}", "Demo Co").replace('shell = "ask"', 'shell = "allow"')
     (target / "company.toml").write_text(text, encoding="utf-8")
     company = load(target)
     from . import gitlog
@@ -244,11 +252,20 @@ def run_demo(target: Path, delay: float = 0.4, force: bool = False, feed=None) -
     if feed is not None:
         store.listeners.append(feed)
     office = Office(company, store)
-    office.start_goal(
-        "Build a word-frequency CLI",
-        "A command-line tool that prints the most common words in a text file.",
-        checks=[f"{PY} -m unittest discover -q"],
-    )
-    model = ScriptedModel(script(), usage={"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
+    if kind == "launch":
+        from . import demo_launch
+
+        office.start_goal(
+            demo_launch.GOAL, demo_launch.GOAL_DETAIL, reviewer="human", criteria=demo_launch.GOAL_CRITERIA
+        )
+        turns = demo_launch.script()
+    else:
+        office.start_goal(
+            "Build a word-frequency CLI",
+            "A command-line tool that prints the most common words in a text file.",
+            checks=[f"{PY} -m unittest discover -q"],
+        )
+        turns = script()
+    model = ScriptedModel(turns, usage={"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
     Runner(office, Paced(model, delay) if delay else model).run()
     return office, model

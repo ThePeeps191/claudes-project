@@ -16,14 +16,18 @@
   <a href="#faq">FAQ</a>
 </p>
 
-<p align="center"><img src="docs/terminal.png" alt="tinyco demo: a CEO agent delegates to an engineer, a reviewer rejects the first attempt, the engineer fixes it, and the goal completes" width="860"></p>
+<p align="center"><img src="docs/terminal.png" alt="tinyco demo: a CEO sets positioning, commissions competitor research, sends it back for an unsourced price, then runs messaging and a landing page, and hands the launch to the human for approval" width="860"></p>
 
-You give the company a goal. The CEO agent breaks it into tasks and hands them to its reports. Engineers write code and run it. Reviewers push back. Every task carries a **definition of done** (a command that has to exit 0, a reviewer, or both), so "done" means the checks passed, not that an agent said so. When there's nothing to do, nothing runs.
+You hire a few AI agents, give them titles and a boss, and hand the company a goal like *"launch our invoicing app to freelance designers"*. The CEO splits it into workstreams and delegates them in order: research, then messaging, then the landing page. Researchers search the web and cite sources. The marketer writes the positioning and the launch email, and the designer builds the page. Every task carries a **definition of done**: acceptance criteria that a reviewer judges one by one, plus shell checks wherever something can be verified mechanically. Work that doesn't meet them goes back. When there's nothing to do, nothing runs and nothing is billed.
 
 ```
 pip install git+https://github.com/ThePeeps191/tinyco
-tinyco init
-tinyco goal "Build a CLI that converts CSV files to JSON" --check "python -m pytest -q"
+tinyco init                    # a launch company: CEO, researcher, marketer, designer
+tinyco goal "Launch our invoicing app to freelance designers" \
+    -a "Competitor research with a sourced price for every competitor" \
+    -a "One-sentence positioning and a launch email under 200 words" \
+    -a "A landing page that states the price and has a signup form" \
+    --review human
 tinyco run
 ```
 
@@ -36,28 +40,55 @@ pip install git+https://github.com/ThePeeps191/tinyco
 tinyco demo
 ```
 
-`tinyco demo` runs a three-person company (CEO, engineer, reviewer) through a small build with the model swapped for a recording. Everything else is real. Files get written, `unittest` really runs against the code, the reviewer really rejects the first attempt, and the same company rules apply as in a live run. Afterwards, `cd tinyco-demo && tinyco dashboard` to browse what happened.
+`tinyco demo` runs a four-person launch company with the model swapped for a recording. Everything else is real: files get written, check commands run, and the same company rules apply as in a live run. The CEO writes down shared positioning, commissions competitor research and sends it back because one price has no source. Then it runs messaging and a landing page in order and hands the finished launch to *you*: `cd tinyco-demo && tinyco inbox`, then `tinyco approve 1`. (The competitors in the demo are invented; a real run researches real ones.) For a software team instead, run `tinyco demo --code`.
 
 ## Run a real company
 
 ```
 export ANTHROPIC_API_KEY=sk-ant-...
 mkdir acme && cd acme
-tinyco init                     # writes company.toml (CEO, engineer, reviewer)
-tinyco goal "Build a markdown-to-HTML converter with a CLI" --check "python -m pytest -q"
+tinyco init                     # company.toml: CEO, market researcher (web), marketing lead, web designer
+tinyco goal "Launch our invoicing app to freelance designers" -f brief.md \
+    -a "Competitor research with sourced prices" -a "A landing page and a launch email" --review human
 tinyco run                      # works until the company is idle, then exits
 ```
 
-`tinyco run` streams what every agent does. When it returns, either the goal is done (its checks passed) or something needs you:
+`tinyco run` streams what every agent does. When it returns, either the goal is waiting for your sign-off or something else needs you:
 
 ```
 tinyco status                   # task tree, spend per agent, anything waiting on you
 tinyco inbox                    # questions and reviews for the human
-tinyco reply 4 "Use Postgres"   # answer an agent; it picks up on the next run
-tinyco approve 1                # if you asked to review the result yourself
+tinyco reply 4 "Target agencies, not freelancers"   # answer an agent; it picks up on the next run
+tinyco approve 1                # sign off on the goal (or: tinyco reject 1 "what to change")
 ```
 
-The code lands in `./workspace`. Templates: `tinyco init -t startup` (default), `-t solo`, `-t research`. More org shapes are in [`examples/`](examples/): a game studio, a Claude Code team, a research desk with web access, and an API shop.
+The deliverables land in `./workspace`: research, copy, pages, plans, code. Templates:
+
+| `tinyco init -t …` | Org | For |
+|---|---|---|
+| `launch` (default) | CEO → market researcher (web), marketing lead, web designer | taking a product to market |
+| `studio` | editor → researcher (web), writer, social lead | publishing on a schedule (pairs with routines) |
+| `software` | CEO → engineer, reviewer | building software with tests as checks |
+| `research` | editor → researcher, fact-checker | sourced reports |
+| `solo` | one agent | trying things out |
+
+More org shapes are in [`examples/`](examples/): a game studio, a Claude Code team, a research desk and an API shop.
+
+### What a goal looks like
+
+Goals are business outcomes, and "done" is whatever you'd check yourself:
+
+```
+tinyco goal "Find 20 agencies that could resell our product" \
+    -a "20 agencies with name, site, size and why they fit, each with a source" \
+    -a "A two-sentence personalized opener for each" --review human
+
+tinyco goal "Write a pricing page that tests $12 vs $19" -f pricing-notes.md \
+    -a "Two variants with identical copy except the price" -a "A rationale grounded in the research" \
+    --check "test -f site/pricing-a.html -a -f site/pricing-b.html" --review human
+```
+
+Acceptance criteria are judged one by one. A reviewer, the human or an agent, must give a pass or fail with a reason for every criterion, and the work only closes when all of them pass. Rejections go back to the assignee with the failing criteria spelled out. Shell checks are optional, for anything a command can verify: tests, a file exists, a page contains the price.
 
 ## Why tinyco
 
@@ -66,7 +97,7 @@ The code lands in `./workspace`. Templates: `tinyco init -t startup` (default), 
 | Problem | What tinyco does |
 |---|---|
 | Agents are woken on a timer to look for work, and idle teams keep spending tokens | **No heartbeats.** Agents wake only for events: assigned, subtask finished, review requested, human replied. An idle company makes zero model calls, and `tinyco run` exits. |
-| Agents report work as done when it isn't | **Every task needs a definition of done.** `submit` runs the task's checks itself, and a reviewer can reject. Claims don't close tasks. |
+| Agents report work as done when it isn't | **Every task needs a definition of done**: acceptance criteria a reviewer must judge one by one, and/or checks that `submit` runs itself. Claims don't close tasks. |
 | Every wake-up starts cold and re-reads the whole board | **Briefings.** Each wake gets a short, targeted brief: why you're awake, the task, the chain of goals above it, subtask status, recent activity, and the agent's own notes. |
 | Finished work doesn't wake the manager, or bounces around forever | Finishing a subtask **wakes its owner**. Duplicate wake-ups are merged. After `max_attempts` failures the task **escalates up the org chart** with the last output attached. |
 | Runs that silently do nothing | A run that ends without finishing, delegating or asking is **nudged**, then escalated. |
@@ -77,25 +108,24 @@ The code lands in `./workspace`. Templates: `tinyco init -t startup` (default), 
 
 ```mermaid
 flowchart LR
-    H([human]) -- goal + checks --> CEO
-    CEO -- create_task + checks --> ENG[engineer]
-    ENG -- submit --> C{checks pass?}
-    C -- no: output back, attempt+1 --> ENG
-    C -- "yes, has reviewer" --> REV[reviewer]
-    C -- "yes, no reviewer" --> D([done])
-    REV -- reject + notes --> ENG
-    REV -- approve --> D
+    H([human]) -- "goal + criteria" --> CEO
+    CEO -- "create_task + criteria" --> W[researcher / marketer / designer]
+    W -- submit --> C{checks pass?}
+    C -- "no: output back" --> W
+    C -- yes --> REV{"reviewer judges<br/>each criterion"}
+    REV -- "any fails: verdicts back" --> W
+    REV -- all pass --> D([done])
     D -- wakes --> CEO
-    C -- "failed max_attempts times" --> CEO
+    CEO -- "submit goal" --> H
 ```
 
 - **Org chart.** Agents are defined in `company.toml`, each with a title, a manager, a model, an effort level and a budget. You can only delegate *down* the chart.
-- **Tasks.** Each task has an assignee, an optional reviewer, and checks (shell commands run from the workspace root). An agent can't create a task without a definition of done.
+- **Tasks.** Each task has an assignee, a description and a definition of done: acceptance criteria, which a reviewer judges one by one (by default whoever delegated the task), and/or checks, which are shell commands run from the workspace root. An agent can't create a task without one.
 - **Wakes.** A small queue in SQLite. Each wake is one bounded session: the agent gets its brief and its tools, works, and ends its turn. Nothing polls.
 - **Tools.** Org tools (`create_task`, `submit`, `review`, `update_task`, `comment`, `ask_human`, `view_task`, `note`) and workspace tools (`list_files`, `read_file`, `write_file`, `edit_file`, `run`). Every agent gets the same tool list on every call, so prompt caching works across the whole company.
 - **Memory.** Agents save short notes that appear in their later briefings. Notes marked `shared` go into every agent's briefing, which is how a lead sets conventions such as layout, tools and interfaces once for the whole team. Task comments, summaries and check results carry the rest.
 - **Git history.** If the workspace is a git repo (`tinyco init` makes one), every finished task is committed with the agent who did it as the author, so `git log` reads like a team's history.
-- **Humans.** Agents can `ask_human`. Goals can require your sign-off (`--review human`). Escalations that reach the top land in your inbox.
+- **Humans.** Agents can `ask_human`. Goals can require your sign-off (`--review human`), and you can see each criterion when you approve. Escalations that reach the top land in your inbox.
 
 Everything lives in `.tinyco/state.db`, which you can open in any SQLite browser.
 
@@ -205,8 +235,8 @@ tinyco export -o run.html
 
 | Command | |
 |---|---|
-| `tinyco init [-t startup\|solo\|research]` | create `company.toml` |
-| `tinyco goal "..." [--check CMD]... [--review human\|AGENT] [-d DETAILS] [-f SPEC.md]` | give the company a goal |
+| `tinyco init [-t launch\|studio\|software\|research\|solo]` | create `company.toml` |
+| `tinyco goal "..." [-a CRITERION]... [--check CMD]... [--review human\|AGENT] [-d DETAILS] [-f SPEC.md]` | give the company a goal |
 | `tinyco run [-j N] [--watch] [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle (`-j`: agents working at once; `--watch`: stay up, run routines) |
 | `tinyco routines` | list routines and when they run next |
 | `tinyco status` | task tree, spend, queue, inbox |
@@ -217,7 +247,7 @@ tinyco export -o run.html
 | `tinyco dashboard [--port N]` | live web dashboard |
 | `tinyco export [-o FILE]` | self-contained HTML snapshot of the run, for sharing |
 | `tinyco cost` | spend by agent, model, goal and task, with prompt-cache hit rates |
-| `tinyco demo [PATH] [--fast]` | scripted demo, no API key |
+| `tinyco demo [PATH] [--fast] [--code]` | scripted product launch (or software build), no API key |
 
 `-C DIR` before any command points at a company in another directory. Otherwise tinyco searches upward for `company.toml`.
 

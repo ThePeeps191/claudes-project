@@ -13,7 +13,7 @@ def _snapshot(html: str) -> dict:
 
 
 def test_export_embeds_the_whole_run(tmp_path):
-    office, _ = run_demo(tmp_path / "co", delay=0)
+    office, _ = run_demo(tmp_path / "co", delay=0, kind="code")
     html = render(office)
     assert "<title>Demo Co · tinyco</title>" in html
     snap = _snapshot(html)
@@ -23,7 +23,7 @@ def test_export_embeds_the_whole_run(tmp_path):
 
 
 def test_export_cannot_break_out_of_its_script_tag(tmp_path):
-    office, _ = run_demo(tmp_path / "co", delay=0)
+    office, _ = run_demo(tmp_path / "co", delay=0, kind="code")
     evil = "</script><script>alert(1)</script>"
     office.start_goal(evil)
     html = render(office)
@@ -32,7 +32,7 @@ def test_export_cannot_break_out_of_its_script_tag(tmp_path):
 
 
 def test_cli_export(tmp_path, monkeypatch, capsys):
-    run_demo(tmp_path / "co", delay=0)
+    run_demo(tmp_path / "co", delay=0, kind="code")
     monkeypatch.chdir(tmp_path / "co")
     assert main(["export", "-o", "run.html"]) == 0
     assert (tmp_path / "co" / "run.html").stat().st_size > 10_000
