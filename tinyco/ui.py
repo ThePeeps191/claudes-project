@@ -139,6 +139,8 @@ class Feed:
             msg = s.bold(s.green(f"★ goal {t} complete: {d.get('title', '')}"))
         elif k in ("task_failed", "escalated"):
             msg = f"{s.red('⚠')} {t} escalated{' to ' + d['to'] if d.get('to') else ''}: {d.get('why', '')}"
+        elif k == "committed":
+            msg = s.dim(f"  ⎇ committed {d.get('sha')} as {e['agent']}")
         elif k == "task_cancelled":
             msg = s.dim(f"  – {t} cancelled")
         elif k == "comment":

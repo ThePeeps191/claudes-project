@@ -234,6 +234,9 @@ def run_demo(target: Path, delay: float = 0.4, force: bool = False, feed=None) -
     text = STARTUP.replace("{name}", "Demo Co").replace('shell = "ask"', 'shell = "allow"')
     (target / "company.toml").write_text(text, encoding="utf-8")
     company = load(target)
+    from . import gitlog
+
+    gitlog.init(company.workspace)
     db = company.state_dir / "state.db"
     if db.exists():
         db.unlink()

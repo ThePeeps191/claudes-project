@@ -254,6 +254,7 @@ function describe(e) {
     case "task_done": return ["good", [`✓ ${t} done`]];
     case "goal_done": return ["star", [`★ goal ${t} complete: ${d.title}`]];
     case "escalated": return ["bad", [`⚠ ${t} escalated${d.to ? " to " + d.to : ""}: ${d.why}`]];
+    case "committed": return ["dim", [`⎇ committed ${d.sha} as `, A()]];
     case "task_cancelled": return ["dim", [`– ${t} cancelled`]];
     case "comment": return ["", ["💬 ", A(), ` on ${t}: ${(d.text || "").slice(0, 160)}`]];
     case "asked_human": return ["bad", ["? ", A(), ` asks you about ${t}: ${d.question}`]];

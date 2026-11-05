@@ -316,3 +316,69 @@ def test_unexpected_error_keeps_the_wake(office):
     summary = Runner(office, Boom()).run()
     assert summary.stopped == "fatal" and "kaboom" in summary.error
     assert len(office.store.pending_wakes()) == 1
+
+
+def test_parallel_agents_really_overlap(make_office):
+    import threading
+
+    data = {
+        "company": {"name": "P", "budget_usd": 5, "shell": "allow"},
+        "agents": {"lead": {}, "a": {"reports_to": "lead"}, "b": {"reports_to": "lead"}},
+    }
+    office = make_office(data)
+    office.start_goal("Two parts")
+    office.create_task("lead", 1, "Part A", "a", "", ["true"])
+    office.create_task("lead", 1, "Part B", "b", "", ["true"])
+    office.store.finish_wake(office.store.next_wake().id)  # skip the lead's goal wake
+    barrier = threading.Barrier(2, timeout=5)
+
+    def meet(task_id):
+        def turn(messages):
+            barrier.wait()  # deadlocks (and times out) unless a and b run at the same time
+            return [call("submit", task_id=task_id, summary="ok")]
+
+        return turn
+
+    model = ScriptedModel(
+        {
+            "a": [meet(2), [say("done")]],
+            "b": [meet(3), [say("done")]],
+            "lead": [[call("submit", task_id=1, summary="both parts")], [say("ok")]],
+        }
+    )
+    summary = Runner(office, model).run(parallel=2)
+    assert summary.stopped == "idle", summary.error
+    assert {t.id: t.status for t in office.store.tasks()} == {1: "done", 2: "done", 3: "done"}
+    # The lead was woken once for both completions, not twice.
+    lead_wakes = [e for e in office.store.events(limit=200, kinds=("wake",)) if e["agent"] == "lead"]
+    assert len(lead_wakes) == 1
+
+
+def test_one_agent_never_runs_two_wakes_at_once(office):
+    import threading
+
+    office.start_goal("Goal")
+    office.create_task("ceo", 1, "One", "engineer", "", ["true"])
+    office.create_task("ceo", 1, "Two", "engineer", "", ["true"])
+    office.store.finish_wake(office.store.next_wake().id)
+    active, peak = [0], [0]
+    lock = threading.Lock()
+
+    def work(task_id):
+        def turn(messages):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            import time
+
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return [call("submit", task_id=task_id, summary="ok")]
+
+        return turn
+
+    model = ScriptedModel({"engineer": [work(2), [say("ok")], work(3), [say("ok")]], "ceo": [[say("wait")]] * 3})
+    Runner(office, model).run(parallel=4)
+    assert peak[0] == 1
+    assert office.get(2).status == office.get(3).status == "done"

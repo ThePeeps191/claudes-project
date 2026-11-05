@@ -6,9 +6,11 @@ can open with any SQLite browser.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,10 +112,28 @@ class Wake:
     created_at: float
 
 
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self.lock:
+            return fn(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _lock_all(cls):
+    """Serialize every public Store method so agents running in parallel threads can share it."""
+    for name, attr in list(vars(cls).items()):
+        if callable(attr) and not name.startswith("_"):
+            setattr(cls, name, _locked(attr))
+    return cls
+
+
 def normalize_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
+@_lock_all
 class Store:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
@@ -123,6 +143,7 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL") if str(path) != ":memory:" else None
         self.db.executescript(SCHEMA)
         self.listeners: list = []
+        self.lock = threading.RLock()
 
     # -- events ---------------------------------------------------------------
 
@@ -252,8 +273,10 @@ class Store:
             (agent, task_id, json.dumps([entry]), time.time()),
         )
 
-    def next_wake(self) -> Wake | None:
-        row = self.db.execute("SELECT * FROM wakes WHERE status = 'pending' ORDER BY id LIMIT 1").fetchone()
+    def next_wake(self, busy: frozenset[str] | set[str] = frozenset()) -> Wake | None:
+        """Claim the oldest pending wake for an agent that isn't already running."""
+        rows = self.db.execute("SELECT * FROM wakes WHERE status = 'pending' ORDER BY id").fetchall()
+        row = next((r for r in rows if r["agent"] not in busy), None)
         if row is None:
             return None
         self.db.execute("UPDATE wakes SET status = 'running' WHERE id = ?", (row["id"],))

@@ -92,6 +92,7 @@ flowchart LR
 - **Wakes.** A small queue in SQLite. Each wake is one bounded session: the agent gets its brief and its tools, works, and ends its turn. Nothing polls.
 - **Tools.** Org tools (`create_task`, `submit`, `review`, `update_task`, `comment`, `ask_human`, `view_task`, `note`) and workspace tools (`list_files`, `read_file`, `write_file`, `edit_file`, `run`). Every agent gets the same tool list on every call, so prompt caching works across the whole company.
 - **Memory.** Agents save short notes that appear in every later briefing. Task comments, summaries and check results carry the rest.
+- **Git history.** If the workspace is a git repo (`tinyco init` makes one), every finished task is committed with the agent who did it as the author, so `git log` reads like a team's history.
 - **Humans.** Agents can `ask_human`. Goals can require your sign-off (`--review human`). Escalations that reach the top land in your inbox.
 
 Everything lives in `.tinyco/state.db`, which you can open in any SQLite browser.
@@ -107,6 +108,8 @@ workspace = "workspace"   # where agents read, write and run things
 shell = "ask"             # ask | allow | deny
 max_attempts = 3          # failed submissions before a task escalates
 check_timeout = 300       # seconds per check command
+parallel = 1              # agents that may work at the same time
+git = true                # commit the workspace when a task is done, authored by the agent
 
 [agents.ceo]
 title = "CEO"
@@ -145,7 +148,7 @@ A local web page (standard library only, bound to 127.0.0.1) that follows the co
 |---|---|
 | `tinyco init [-t startup\|solo\|research]` | create `company.toml` |
 | `tinyco goal "..." [--check CMD]... [--review human\|AGENT] [-d DETAILS]` | give the company a goal |
-| `tinyco run [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle |
+| `tinyco run [-j N] [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle (`-j`: agents working at once) |
 | `tinyco status` | task tree, spend, queue, inbox |
 | `tinyco inbox` / `reply ID TEXT` / `approve ID` / `reject ID NOTES` | the human's side |
 | `tinyco task ID` / `log [--task ID]` / `org` | inspect |
@@ -179,7 +182,7 @@ Your actual spend depends on the goal and the models. `tinyco status` shows it p
 
 **Which models?** Claude, through the official `anthropic` SDK, with streaming, adaptive thinking, prompt caching and server-side refusal fallbacks. Any Claude model id works per agent.
 
-**Do agents run in parallel?** Not yet. Wake-ups run one at a time in queue order, which keeps runs reproducible and avoids agents editing the same files at once. Parallel runs for independent subtrees are on the roadmap.
+**Do agents run in parallel?** Yes, with `tinyco run -j 3` or `parallel = 3` under `[company]`. Different agents work at the same time, and a single agent never handles two wake-ups at once. The default is 1: runs are easier to follow, and agents can't edit the same files at the same moment. With parallel runs, spend can pass a budget by up to one model call per running agent before the cap stops further calls.
 
 **Can an agent game its own checks?** An engineer could, in principle, edit the tests it's checked against. Give important tasks a reviewer, write top-level checks yourself (`tinyco goal --check`), and keep goal-level tests outside what the engineer is told to change.
 
@@ -191,10 +194,9 @@ Your actual spend depends on the goal and the models. `tinyco status` shows it p
 
 tinyco is alpha. The core loop, the rules and the dashboard are covered by an offline test suite, including a test that drives the real `anthropic` SDK over a mock transport to check the exact requests. Next:
 
-- [ ] Parallel wake-ups for independent subtrees
 - [ ] Adapters for agents you already use (Claude Code, other CLIs) via an MCP server for the org tools
 - [ ] Scheduled goals (`tinyco goal --every monday`)
-- [ ] Git integration: a branch per task, merged when it's done
+- [ ] A git branch per task, merged when it's done
 - [ ] More templates
 
 Ideas and PRs welcome.

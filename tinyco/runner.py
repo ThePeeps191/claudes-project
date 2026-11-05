@@ -8,6 +8,7 @@ nothing; ``run`` returns.
 
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from . import pricing
@@ -49,7 +50,12 @@ class Runner:
 
     # -- the queue --------------------------------------------------------------
 
-    def run(self, max_wakes: int | None = None) -> RunSummary:
+    def run(self, max_wakes: int | None = None, parallel: int = 1) -> RunSummary:
+        """Work through the wake queue until it's empty (or a limit is hit).
+
+        With ``parallel > 1``, up to that many agents work at once. One agent never
+        runs two wakes at the same time.
+        """
         summary = RunSummary()
         start_spend = self.store.spent()
         recovered = self.store.requeue_running()
@@ -57,43 +63,78 @@ class Runner:
             self.store.event("recovered", None, None, wakes=recovered)
         if self.store.spent() < self.company.budget_usd:
             self.office.resume_paused()
-        while True:
-            if max_wakes is not None and summary.wakes >= max_wakes:
-                summary.stopped = "max_wakes"
-                break
-            if self.store.spent() >= self.company.budget_usd:
-                summary.stopped = "budget"
-                self.store.event("budget_exhausted", None, None, budget=self.company.budget_usd)
-                break
-            wake = self.store.next_wake()
-            if wake is None:
-                break
-            summary.wakes += 1
-            try:
-                summary.turns += self.run_wake(wake)
-                self.store.finish_wake(wake.id)
-            except ModelError as e:
-                self.store.event("model_error", wake.agent, wake.task_id, error=str(e))
-                if e.fatal:
-                    self.store.finish_wake(wake.id, "pending")  # retried on the next run
-                    summary.stopped, summary.error = "fatal", str(e)
+
+        parallel = max(1, int(parallel))
+        busy: set[str] = set()
+        inflight: dict[Future, Wake] = {}
+        pool = ThreadPoolExecutor(max_workers=parallel, thread_name_prefix="tinyco") if parallel > 1 else None
+        try:
+            while True:
+                while summary.stopped == "idle" and len(inflight) < parallel:
+                    if max_wakes is not None and summary.wakes >= max_wakes:
+                        summary.stopped = "max_wakes"
+                        break
+                    if self.store.spent() >= self.company.budget_usd:
+                        summary.stopped = "budget"
+                        self.store.event("budget_exhausted", None, None, budget=self.company.budget_usd)
+                        break
+                    wake = self.store.next_wake(busy)
+                    if wake is None:
+                        break
+                    summary.wakes += 1
+                    if pool is None:  # sequential: run in this thread so Ctrl+C is immediate
+                        self._collect(summary, *self._run_one(wake))
+                        continue
+                    busy.add(wake.agent)
+                    inflight[pool.submit(self._run_one, wake)] = wake
+                if not inflight:
                     break
-                self.store.finish_wake(wake.id, "error")
-                self.office.block(wake.task_id, f"model error: {e}", wake.agent)
-            except KeyboardInterrupt:
-                self.store.finish_wake(wake.id, "pending")
-                raise
-            except Exception as e:  # keep the wake so nothing is lost, then stop
-                self.store.finish_wake(wake.id, "pending")
-                self.store.event("internal_error", wake.agent, wake.task_id, error=f"{type(e).__name__}: {e}")
-                summary.stopped, summary.error = "fatal", f"{type(e).__name__}: {e}"
-                break
+                finished, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    busy.discard(inflight.pop(fut).agent)
+                    self._collect(summary, *fut.result())
+        except KeyboardInterrupt:
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
+
         summary.usd = self.store.spent() - start_spend
         summary.goals = [t for t in self.store.roots()]
         self.store.event(
             "run_finished", None, None, wakes=summary.wakes, usd=round(summary.usd, 4), stopped=summary.stopped
         )
         return summary
+
+    @staticmethod
+    def _collect(summary: RunSummary, turns: int, fatal: str | None) -> None:
+        summary.turns += turns
+        if fatal and summary.stopped != "fatal":
+            summary.stopped, summary.error = "fatal", fatal
+
+    def _run_one(self, wake: Wake) -> tuple[int, str | None]:
+        """Run one wake. Returns (model calls made, fatal error or None)."""
+        try:
+            turns = self.run_wake(wake)
+            self.store.finish_wake(wake.id)
+            return turns, None
+        except ModelError as e:
+            self.store.event("model_error", wake.agent, wake.task_id, error=str(e))
+            if e.fatal:
+                self.store.finish_wake(wake.id, "pending")  # retried on the next run
+                return 0, str(e)
+            self.store.finish_wake(wake.id, "error")
+            self.office.block(wake.task_id, f"model error: {e}", wake.agent)
+            return 0, None
+        except KeyboardInterrupt:
+            self.store.finish_wake(wake.id, "pending")
+            raise
+        except Exception as e:  # keep the wake so nothing is lost, then stop
+            self.store.finish_wake(wake.id, "pending")
+            self.store.event("internal_error", wake.agent, wake.task_id, error=f"{type(e).__name__}: {e}")
+            return 0, f"{type(e).__name__}: {e}"
 
     # -- one wake ---------------------------------------------------------------
 
