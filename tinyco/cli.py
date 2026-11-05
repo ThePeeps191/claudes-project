@@ -121,8 +121,12 @@ def cmd_run(args) -> int:
         )
         return 1
     started = time.time()
+    runner = Runner(office, ClaudeModel())
+    parallel = args.jobs or company.parallel
+    if args.watch:
+        return _watch(runner, company, style, parallel, args.poll)
     try:
-        summary = Runner(office, ClaudeModel()).run(max_wakes=args.max_wakes, parallel=args.jobs or company.parallel)
+        summary = runner.run(max_wakes=args.max_wakes, parallel=parallel)
     except KeyboardInterrupt:
         print(style.yellow("\ninterrupted; pending work is saved. Resume with: tinyco run"))
         return 130
@@ -148,6 +152,57 @@ def cmd_run(args) -> int:
     if inbox:
         print(style.yellow(f"{len(inbox)} item(s) need you: tinyco inbox"))
     return 0
+
+
+def _watch(runner, company, style, parallel: int, poll: float) -> int:
+    n = len(company.routines)
+    print(
+        style.dim(
+            f"Watching {company.name}: new goals and replies are picked up as they arrive"
+            + (f", {n} routine{'s' if n != 1 else ''} scheduled" if n else "")
+            + ". Idle costs nothing. Ctrl+C to stop."
+        )
+    )
+    try:
+        summary = runner.watch(parallel=parallel, poll=poll)
+    except KeyboardInterrupt:
+        print(style.yellow("\nstopped watching; pending work is saved."))
+        return 0
+    if summary.stopped == "locked":
+        print(style.red(f"tinyco: {summary.error}"), file=sys.stderr)
+        return 1
+    if summary.stopped in ("fatal", "budget"):
+        print(style.red(f"stopped: {summary.error or 'company budget used up'}"))
+        return 2
+    return 0
+
+
+def cmd_routines(args) -> int:
+    import datetime as dt
+
+    from .routines import Scheduler
+
+    company, store, office = open_company(args)
+    style = Style(use_color())
+    if not company.routines:
+        print(style.dim("No routines. Add [[routines]] entries to company.toml (see the README)."))
+        return 0
+    for r in Scheduler(office, company.routines).status():
+        every = _human_interval(r["every"]) + (f" at {r['at'][0]:02d}:{r['at'][1]:02d}" if r["at"] else "")
+        last = dt.datetime.fromtimestamp(r["last_run"]).strftime("%Y-%m-%d %H:%M") if r["last_run"] else "never"
+        nxt = dt.datetime.fromtimestamp(r["next"]).strftime("%Y-%m-%d %H:%M")
+        task = f" (last goal T{r['last_task']})" if r["last_task"] else ""
+        print(f"{style.bold(r['name'])}: {r['goal']}")
+        print(style.dim(f"   every {every} · last run {last}{task} · next {nxt}"))
+    print(style.dim("Routines fire while `tinyco run --watch` is running."))
+    return 0
+
+
+def _human_interval(seconds: int) -> str:
+    for unit, n in (("w", 604800), ("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds % n == 0:
+            return f"{seconds // n}{unit}"
+    return f"{seconds}s"
 
 
 def cmd_status(args) -> int:
@@ -424,6 +479,13 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("run", help="work through pending wake-ups until the company is idle")
     s.add_argument("--yes", "-y", action="store_true", help="allow shell commands without asking (use in a sandbox)")
     s.add_argument("--max-wakes", type=int, help="stop after this many wake-ups")
+    s.add_argument(
+        "--watch",
+        "-w",
+        action="store_true",
+        help="stay up: pick up new goals and replies as they arrive, and run routines",
+    )
+    s.add_argument("--poll", type=float, default=2.0, help=argparse.SUPPRESS)
     s.add_argument("--jobs", "-j", type=int, help="how many agents may work at once (default: company.parallel or 1)")
     s.add_argument("--budget", type=float, help="override the company budget (USD) for this run")
     s.add_argument("--verbose", "-v", action="store_true", help="show thinking summaries and every tool call")
@@ -478,6 +540,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fast", action="store_true", help="no pauses")
     s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
     s.set_defaults(fn=cmd_demo)
+
+    s = sub.add_parser("routines", help="list scheduled routines and when they run next")
+    s.set_defaults(fn=cmd_routines)
 
     s = sub.add_parser("cost", help="spend by agent, model, goal and task, with prompt-cache hit rates")
     s.set_defaults(fn=cmd_cost)

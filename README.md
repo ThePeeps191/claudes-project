@@ -9,6 +9,7 @@
   <a href="#try-it-in-10-seconds">Try it</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#companytoml">Config</a> ·
+  <a href="#keep-it-running-watch-mode-and-routines">Watch mode</a> ·
   <a href="#bring-your-own-agent-claude-code">Claude Code agents</a> ·
   <a href="#the-dashboard">Dashboard</a> ·
   <a href="#safety">Safety</a> ·
@@ -105,6 +106,7 @@ Everything lives in `.tinyco/state.db`, which you can open in any SQLite browser
 name = "Acme"
 mission = "Ship small, well-tested software that does exactly what was asked."
 budget_usd = 10.0         # hard cap for the whole company
+budget_period = "total"   # total | day | week | month: when budgets reset
 workspace = "workspace"   # where agents read, write and run things
 shell = "ask"             # ask | allow | deny
 max_attempts = 3          # failed submissions before a task escalates
@@ -134,6 +136,30 @@ max_turns = 40            # model calls per wake-up
 Any shape of org works, as long as exactly one agent has no `reports_to`. Deeper hierarchies, several specialists, research desks: the `research` template is an editor, a researcher and a fact-checker producing Markdown reports.
 
 Prices for budget accounting live in `tinyco/pricing.py`. Override them per model under `[company.pricing."<model-id>"]` with `input`, `output` and `cache_read` in USD per million tokens.
+
+## Keep it running: watch mode and routines
+
+```
+tinyco run --watch
+```
+
+In watch mode, `tinyco run` keeps running once the queue is empty. Goals and replies you add from another terminal or the dashboard are picked up within a couple of seconds. While it waits, all it does is check a local SQLite queue: no model calls, no tokens.
+
+Recurring work goes in `company.toml` as routines:
+
+```toml
+[[routines]]
+name = "Dependency check"
+every = "1d"              # 15m, 6h, 1d, 1w
+at = "09:00"              # optional local time (whole-day intervals)
+goal = "Check for outdated dependencies, upgrade the safe ones, and keep the tests green"
+checks = ["python -m pytest -q"]
+review = "human"          # optional
+```
+
+A routine fires by creating an ordinary goal. If the goal it created last time is still open, it skips that slot instead of stacking up duplicates. `tinyco routines` shows when each one runs next.
+
+For a company that runs for weeks, make budgets reset with `budget_period = "day"`, `"week"` or `"month"` under `[company]`. Company and agent budgets then cap spend within the current period. Work paused when the cap was hit resumes when the next period starts.
 
 ## Bring your own agent: Claude Code
 
@@ -181,7 +207,8 @@ tinyco export -o run.html
 |---|---|
 | `tinyco init [-t startup\|solo\|research]` | create `company.toml` |
 | `tinyco goal "..." [--check CMD]... [--review human\|AGENT] [-d DETAILS]` | give the company a goal |
-| `tinyco run [-j N] [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle (`-j`: agents working at once) |
+| `tinyco run [-j N] [--watch] [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle (`-j`: agents working at once; `--watch`: stay up, run routines) |
+| `tinyco routines` | list routines and when they run next |
 | `tinyco status` | task tree, spend, queue, inbox |
 | `tinyco inbox` / `reply ID TEXT` / `approve ID` / `reject ID NOTES` | the human's side |
 | `tinyco task ID` / `log [--task ID]` / `org` | inspect |
@@ -248,7 +275,6 @@ Fifty finished subtasks still wake the CEO only once, because wakes for the same
 tinyco is alpha. The core loop, the rules and the dashboard are covered by an offline test suite, including a test that drives the real `anthropic` SDK over a mock transport to check the exact requests. Next:
 
 - [ ] More runtimes on the same MCP bridge (other coding-agent CLIs)
-- [ ] Scheduled goals (`tinyco goal --every monday`)
 - [ ] A git branch per task, merged when it's done
 - [ ] More templates
 
