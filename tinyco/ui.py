@@ -157,6 +157,8 @@ class Feed:
             msg = f"{s.bold('⟳ routine')} {d.get('routine')} → {t}"
         elif k == "routine_skipped":
             msg = s.dim(f"  ⟳ routine {d.get('routine')} skipped: {d.get('why')}")
+        elif k == "mcp_call":
+            msg = f"  🔌 {who} used {d.get('tool')}"
         elif k == "web_search":
             msg = f"  🔎 {who} searched: {_one_line(d.get('query') or '', 120)}"
         elif k == "web_fetch":

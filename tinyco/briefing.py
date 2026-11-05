@@ -58,6 +58,13 @@ def system_prompt(company: Company, agent: AgentSpec) -> str:
         pos.append(f"Your direct reports: {', '.join(reports)}.")
     else:
         pos.append("You have no reports; you do hands-on work yourself.")
+    if getattr(agent, "mcp", None):
+        names = ", ".join(m["name"] for m in agent.mcp)
+        pos.append(
+            f"You're connected to these services through MCP tools: {names}. Actions you take there are real "
+            "(records created, messages sent), so act only as your task requires, and record what you did in "
+            "your submission summary."
+        )
     return SYSTEM.format(
         name=agent.name,
         title=agent.title,

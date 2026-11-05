@@ -21,7 +21,7 @@ def flag(name):
 log = os.environ.get("FAKE_CLAUDE_LOG")
 if log:
     with open(log, "w") as f:
-        json.dump({"args": args, "cwd": os.getcwd()}, f)
+        json.dump({"args": args, "cwd": os.getcwd(), "mcp_config": open(flag("--mcp-config")).read()}, f)
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "work")
 if mode == "garbage":

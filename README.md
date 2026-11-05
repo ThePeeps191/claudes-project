@@ -11,6 +11,7 @@
   <a href="#companytoml">Config</a> ·
   <a href="#keep-it-running-watch-mode-and-routines">Watch mode</a> ·
   <a href="#bring-your-own-agent-claude-code">Claude Code agents</a> ·
+  <a href="#connect-real-tools-mcp-servers">MCP tools</a> ·
   <a href="#the-dashboard">Dashboard</a> ·
   <a href="#safety">Safety</a> ·
   <a href="#faq">FAQ</a>
@@ -159,6 +160,7 @@ model = "claude-opus-5-5" # any Claude model id
 effort = "medium"
 web = false               # server-side web search + fetch
 runtime = "api"           # api | claude-code
+# [[agents.engineer.mcp]] # remote MCP servers this agent may use; see "Connect real tools"
 budget_usd = 5.0
 max_turns = 40            # model calls per wake-up
 ```
@@ -212,6 +214,22 @@ Each wake runs `claude -p <briefing> --output-format json` in the workspace. Cla
 ## Web access
 
 Set `web = true` on an agent to give it Claude's server-side web search and web fetch tools. The `research` template turns it on for the researcher and the fact-checker. Each search adds $0.01 to the agent's spend, at the list price of $10 per 1,000 searches.
+
+## Connect real tools: MCP servers
+
+Agents can work in your actual systems (Notion, a CRM, Stripe, Linear, a newsletter platform) through remote [MCP](https://modelcontextprotocol.io) servers:
+
+```toml
+[[agents.marketer.mcp]]
+name = "notion"
+url = "https://mcp.notion.com/mcp"
+token_env = "NOTION_TOKEN"                       # read from your environment at run time, never stored
+tools = ["notion-search", "notion-create-pages"] # optional allowlist; everything else on the server is off
+```
+
+API agents reach these servers through the Claude API's MCP connector, and Claude Code agents get them added to their MCP config. Every call shows up in the feed (`🔌 marketer used notion.notion-create-pages`). The agent's system prompt names the services and reminds it that actions there are real.
+
+These calls run on Anthropic's side, so tinyco can't stop to ask you before each one. **The allowlist is your control.** Give agents read and draft tools freely, and allow tools that send, publish or spend only where you're comfortable with that. Per-tool allowlists work for API agents; for Claude Code agents, list only servers you're happy to expose in full.
 
 ## The dashboard
 

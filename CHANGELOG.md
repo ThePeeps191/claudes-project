@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remote MCP servers per agent (`[[agents.<name>.mcp]]`: url, token from the environment, optional tool allowlist) via the Claude API MCP connector, and for Claude Code agents via their MCP config; calls appear in the feed.
+
 - Acceptance criteria: plain-language definition of done for business work (`-a/--criteria`, `criteria` on tasks); reviewers must give a verdict per criterion and can only approve when all pass; rejections carry the failing criteria.
 - `tinyco init` defaults to a `launch` company (CEO, market researcher with web, marketing lead, web designer); new `studio` content template; `software` is the old `startup`.
 - `tinyco demo` is now a product launch that ends with the human's approval (`--code` for the software demo); README leads with business goals.

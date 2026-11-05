@@ -31,6 +31,7 @@ class AgentSpec:
     runtime: str = "api"  # api | claude-code
     command: str = "claude"  # executable for external runtimes
     web: bool = False  # server-side web search + fetch (API runtime)
+    mcp: list = field(default_factory=list)  # remote MCP servers: {name, url, token_env?, tools?}
 
 
 @dataclass
@@ -133,6 +134,41 @@ class Company:
         return "\n".join(lines)
 
 
+def _mcp_servers(agent: str, raw, runtime: str) -> list[dict]:
+    """Validate [[agents.<name>.mcp]] entries: remote MCP servers this agent may use."""
+    import re
+
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ConfigError(f"agents.{agent}.mcp must be a list of [[agents.{agent}.mcp]] tables")
+    out, names = [], set()
+    for i, m in enumerate(raw):
+        where = f"agents.{agent}.mcp[{i}]"
+        if not isinstance(m, dict):
+            raise ConfigError(f"{where} must be a table")
+        name = str(m.get("name") or "")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name):
+            raise ConfigError(f"{where}.name must be letters, digits, - or _ (got {name!r})")
+        if name in names or name == "tinyco":
+            raise ConfigError(f"{where}: duplicate or reserved server name {name!r}")
+        names.add(name)
+        url = str(m.get("url") or "")
+        if not url.startswith("https://"):
+            raise ConfigError(f"{where}.url must be an https:// URL of a remote MCP server")
+        token_env = m.get("token_env")
+        if token_env is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(token_env)):
+            raise ConfigError(f"{where}.token_env must be an environment variable name")
+        tools = m.get("tools")
+        if tools is not None:
+            if not isinstance(tools, list) or not all(isinstance(t, str) and t for t in tools):
+                raise ConfigError(f"{where}.tools must be a list of tool names")
+            if runtime == "claude-code":
+                raise ConfigError(f"{where}.tools: per-tool allowlists only work for API agents, not claude-code")
+        out.append({"name": name, "url": url, "token_env": token_env, "tools": tools})
+    return out
+
+
 def find_root(start: Path | None = None) -> Path:
     """Walk up from ``start`` until a directory containing company.toml is found."""
     cur = (start or Path.cwd()).resolve()
@@ -181,6 +217,7 @@ def parse(data: dict, root: Path) -> Company:
             runtime=runtime,
             command=a.get("command", "claude"),
             web=bool(a.get("web", False)),
+            mcp=_mcp_servers(name, a.get("mcp"), runtime),
         )
 
     roots = [a.name for a in agents.values() if a.reports_to is None]

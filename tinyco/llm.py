@@ -66,6 +66,8 @@ def normalize(content: list, stop_reason: str, model: str, usage: dict, refusal:
             calls.append(ToolCall(_get(b, "id"), _get(b, "name"), _get(b, "input")))
         elif t == "server_tool_use":
             server.append(ToolCall(_get(b, "id"), _get(b, "name"), _get(b, "input")))
+        elif t == "mcp_tool_use":
+            server.append(ToolCall(_get(b, "id"), f"mcp:{_get(b, 'server_name')}.{_get(b, 'name')}", _get(b, "input")))
     return Turn(
         content=content,
         stop_reason=stop_reason or "end_turn",
@@ -79,10 +81,29 @@ def normalize(content: list, stop_reason: str, model: str, usage: dict, refusal:
     )
 
 
+def mcp_servers(agent: AgentSpec) -> list[dict]:
+    """Connector definitions for an agent's remote MCP servers, with tokens read from the environment."""
+    import os
+
+    out = []
+    for m in agent.mcp:
+        server = {"type": "url", "url": m["url"], "name": m["name"]}
+        if m.get("token_env"):
+            token = os.environ.get(m["token_env"])
+            if not token:
+                raise ModelError(
+                    f"{agent.name}'s MCP server {m['name']!r} needs ${m['token_env']} to be set", fatal=True
+                )
+            server["authorization_token"] = token
+        out.append(server)
+    return out
+
+
 class ClaudeModel:
     """Claude API backend: streaming, adaptive thinking, prompt caching, refusal fallbacks."""
 
     FALLBACK_BETA = "server-side-fallback-2026-07-01"
+    MCP_BETA = "mcp-client-2025-11-20"
     # Models that accept the server-side ``fallbacks: "default"`` parameter.
     FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
 
@@ -108,9 +129,15 @@ class ClaudeModel:
             output_config={"effort": agent.effort},
             cache_control={"type": "ephemeral"},
         )
+        betas = []
         if agent.model in self.FALLBACK_MODELS:
-            params["betas"] = [self.FALLBACK_BETA]
+            betas.append(self.FALLBACK_BETA)
             params["fallbacks"] = "default"
+        if getattr(agent, "mcp", None):
+            betas.append(self.MCP_BETA)
+            params["mcp_servers"] = mcp_servers(agent)
+        if betas:
+            params["betas"] = betas
         try:
             with self.client.beta.messages.stream(**params) as stream:
                 msg = stream.get_final_message()

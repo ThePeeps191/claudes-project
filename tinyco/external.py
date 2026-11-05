@@ -59,7 +59,13 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
     spec = launch_spec(company.root, agent.name, task.id, allow_shell=True)
     with tempfile.TemporaryDirectory(prefix="tinyco-") as tmp:
         cfg = Path(tmp) / "mcp.json"
-        cfg.write_text(json.dumps({"mcpServers": {"tinyco": spec}}), encoding="utf-8")
+        servers = {"tinyco": spec}
+        for m in agent.mcp:  # remote servers; Claude Code expands ${VAR} itself, so no token is written here
+            entry: dict = {"type": "http", "url": m["url"]}
+            if m.get("token_env"):
+                entry["headers"] = {"Authorization": "Bearer ${" + m["token_env"] + "}"}
+            servers[m["name"]] = entry
+        cfg.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
         cmd = [
             exe,
             "-p",
@@ -73,6 +79,7 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
             "--strict-mcp-config",
             "--allowedTools",
             "mcp__tinyco__*",
+            *[f"mcp__{m['name']}__*" for m in agent.mcp],
             "--model",
             agent.model,
             "--max-turns",
