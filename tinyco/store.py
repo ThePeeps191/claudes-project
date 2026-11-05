@@ -420,14 +420,18 @@ class Store:
             ),
         )
 
-    def spent(self, agent: str | None = None, task_id: int | None = None) -> float:
-        sql, args = "SELECT COALESCE(SUM(usd), 0) FROM spend", []
+    def spent(self, agent: str | None = None, task_id: int | None = None, since: float | None = None) -> float:
+        where, args = [], []
         if agent is not None:
-            sql += " WHERE agent = ?"
+            where.append("agent = ?")
             args.append(agent)
         elif task_id is not None:
-            sql += " WHERE task_id = ?"
+            where.append("task_id = ?")
             args.append(task_id)
+        if since is not None:
+            where.append("ts >= ?")
+            args.append(since)
+        sql = "SELECT COALESCE(SUM(usd), 0) FROM spend" + (" WHERE " + " AND ".join(where) if where else "")
         return float(self.db.execute(sql, args).fetchone()[0])
 
     def spend_by_agent(self) -> dict[str, dict]:

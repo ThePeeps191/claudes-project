@@ -5,6 +5,8 @@
 - Performance: 2.5–3× less overhead per wake (indexed queries, WAL `synchronous=NORMAL`, O(1) duplicate detection, one-query spend totals); `benchmarks/scheduler.py`.
 - Briefs include a workspace file tree and the last failed check output; manager briefs summarize subtasks instead of listing every one; agents are told to batch independent tool calls.
 - `tinyco cost`: spend by agent, model, goal and task, with prompt-cache hit rates.
+- `tinyco run --watch`, `[[routines]]` (recurring goals, `every`/`at`) and `tinyco routines`.
+- `budget_period` (day/week/month) so budgets reset for long-running companies.
 - Repository renamed to `tinyco`.
 
 ## 0.1.0 (unreleased)

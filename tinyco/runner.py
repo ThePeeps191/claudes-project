@@ -8,6 +8,8 @@ nothing; ``run`` returns.
 
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -67,19 +69,24 @@ class Runner:
 
     # -- budgets ----------------------------------------------------------------
 
+    def period_spent(self, agent: str | None = None) -> float:
+        """Spend counted against budgets: everything, or just the current day/week/month."""
+        return self.store.spent(agent=agent, since=self.company.period_start())
+
     def over_budget(self, agent: str) -> str | None:
         spec = self.company.agents[agent]
-        if self.store.spent() >= self.company.budget_usd:
-            return f"company budget of ${self.company.budget_usd:.2f} is used up"
-        if spec.budget_usd is not None and self.store.spent(agent=agent) >= spec.budget_usd:
-            return f"{agent}'s budget of ${spec.budget_usd:.2f} is used up"
+        per = "" if self.company.budget_period == "total" else f" for this {self.company.budget_period}"
+        if self.period_spent() >= self.company.budget_usd:
+            return f"company budget of ${self.company.budget_usd:.2f}{per} is used up"
+        if spec.budget_usd is not None and self.period_spent(agent) >= spec.budget_usd:
+            return f"{agent}'s budget of ${spec.budget_usd:.2f}{per} is used up"
         return None
 
     def _budget_left(self, agent: str) -> float | None:
-        left = self.company.budget_usd - self.store.spent()
+        left = self.company.budget_usd - self.period_spent()
         spec = self.company.agents[agent]
         if spec.budget_usd is not None:
-            left = min(left, spec.budget_usd - self.store.spent(agent=agent))
+            left = min(left, spec.budget_usd - self.period_spent(agent))
         return left
 
     # -- the queue --------------------------------------------------------------
@@ -97,13 +104,58 @@ class Runner:
                 return summary
             return self._run(max_wakes, parallel)
 
+    def watch(
+        self,
+        parallel: int = 1,
+        poll: float = 2.0,
+        stop: threading.Event | None = None,
+        on_cycle=None,
+    ) -> RunSummary:
+        """Stay up: fire routines when due and pick up new work as it arrives.
+
+        Between bursts of work the only activity is a cheap check of the local
+        queue every ``poll`` seconds; no model is called while there's nothing to do.
+        """
+        from .routines import Scheduler
+
+        stop = stop or threading.Event()
+        total = RunSummary()
+        with run_lock(self.company.state_dir) as locked:
+            if not locked:
+                total.stopped, total.error = "locked", "another `tinyco run` is already working on this company"
+                return total
+            sched = Scheduler(self.office, self.company.routines)
+            self.store.event("watch_started", None, None, routines=[r.name for r in self.company.routines])
+            while not stop.is_set():
+                sched.fire_due()
+                s = self._run(None, parallel)
+                total.wakes += s.wakes
+                total.turns += s.turns
+                total.usd += s.usd
+                if on_cycle is not None:
+                    on_cycle(s)
+                if s.stopped == "fatal" or (s.stopped == "budget" and self.company.budget_period == "total"):
+                    total.stopped, total.error = s.stopped, s.error
+                    break
+                # Sleep until new work, the next routine, or an hourly re-check (budget periods roll over).
+                deadline = time.time() + 3600
+                nxt = sched.next_wakeup()
+                if nxt is not None:
+                    deadline = min(deadline, nxt)
+                while not stop.is_set() and time.time() < deadline:
+                    if self.store.pending_wakes() and s.stopped != "budget":
+                        break
+                    stop.wait(max(0.05, min(poll, deadline - time.time())))
+            total.stopped = total.stopped if total.stopped != "idle" else "stopped"
+        return total
+
     def _run(self, max_wakes: int | None, parallel: int) -> RunSummary:
         summary = RunSummary()
         start_spend = self.store.spent()
         recovered = self.store.requeue_running()
         if recovered:
             self.store.event("recovered", None, None, wakes=recovered)
-        if self.store.spent() < self.company.budget_usd:
+        if self.period_spent() < self.company.budget_usd:
             self.office.resume_paused()
 
         parallel = max(1, int(parallel))
@@ -116,7 +168,7 @@ class Runner:
                     if max_wakes is not None and summary.wakes >= max_wakes:
                         summary.stopped = "max_wakes"
                         break
-                    if self.store.spent() >= self.company.budget_usd:
+                    if self.period_spent() >= self.company.budget_usd:
                         summary.stopped = "budget"
                         self.store.event("budget_exhausted", None, None, budget=self.company.budget_usd)
                         break
@@ -145,9 +197,10 @@ class Runner:
 
         summary.usd = self.store.spent() - start_spend
         summary.goals = [t for t in self.store.roots()]
-        self.store.event(
-            "run_finished", None, None, wakes=summary.wakes, usd=round(summary.usd, 4), stopped=summary.stopped
-        )
+        if summary.wakes or summary.stopped != "idle":
+            self.store.event(
+                "run_finished", None, None, wakes=summary.wakes, usd=round(summary.usd, 4), stopped=summary.stopped
+            )
         return summary
 
     @staticmethod

@@ -46,7 +46,25 @@ class Company:
     max_attempts: int = 3
     git: bool = True
     parallel: int = 1
+    budget_period: str = "total"  # total | day | week | month
+    routines: list = field(default_factory=list)
     extra: dict = field(default_factory=dict)
+
+    def period_start(self, now: float | None = None) -> float | None:
+        """Start of the current budget period (None: budgets are lifetime totals)."""
+        import time
+        from datetime import datetime, timedelta
+
+        if self.budget_period == "total":
+            return None
+        d = datetime.fromtimestamp(time.time() if now is None else now).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        if self.budget_period == "week":
+            d -= timedelta(days=d.weekday())
+        elif self.budget_period == "month":
+            d = d.replace(day=1)
+        return d.timestamp()
 
     @property
     def workspace(self) -> Path:
@@ -164,6 +182,13 @@ def parse(data: dict, root: Path) -> Company:
     if shell not in SHELL_POLICIES:
         raise ConfigError(f"company.shell must be one of {', '.join(SHELL_POLICIES)}")
 
+    period = str(c.get("budget_period", "total"))
+    if period not in ("total", "day", "week", "month"):
+        raise ConfigError("company.budget_period must be one of total, day, week, month")
+    from .routines import parse_routines
+
+    routines = parse_routines(data.get("routines") or [])
+
     ws = (root / c.get("workspace", "workspace")).resolve()
     if ws == root.resolve() or ws in root.resolve().parents:
         raise ConfigError(
@@ -183,6 +208,8 @@ def parse(data: dict, root: Path) -> Company:
         max_attempts=int(c.get("max_attempts", 3)),
         git=bool(c.get("git", True)),
         parallel=max(1, int(c.get("parallel", 1))),
+        budget_period=period,
+        routines=routines,
         extra={
             k: v
             for k, v in c.items()
@@ -197,6 +224,7 @@ def parse(data: dict, root: Path) -> Company:
                 "max_attempts",
                 "git",
                 "parallel",
+                "budget_period",
             }
         },
     )
