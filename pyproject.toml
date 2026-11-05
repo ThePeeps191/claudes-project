@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ThePeeps191/claudes-project"
+Homepage = "https://github.com/ThePeeps191/tinyco"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]

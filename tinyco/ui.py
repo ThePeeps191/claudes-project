@@ -180,8 +180,20 @@ def board(office: Office, style: Style) -> str:
     store = office.store
     lines: list[str] = []
 
+    tasks = store.tasks()
+    kids: dict[int | None, list[Task]] = {}
+    for t in tasks:
+        kids.setdefault(t.parent_id, []).append(t)
+    own = store.spend_by_task()
+    total: dict[int, float] = {}
+
+    def cost_of(t: Task) -> float:
+        if t.id not in total:
+            total[t.id] = own.get(t.id, 0.0) + sum(cost_of(c) for c in kids.get(t.id, []))
+        return total[t.id]
+
     def walk(t: Task, depth: int) -> None:
-        cost = store.subtree_spend(t.id)
+        cost = cost_of(t)
         cost_s = s.dim(f"${cost:.2f}") if cost else ""
         who = s.agent(t.assignee)
         extra = ""
@@ -192,10 +204,10 @@ def board(office: Office, style: Style) -> str:
         if t.attempts:
             extra += s.dim(f"  attempts: {t.attempts}")
         lines.append(f"{'   ' * depth}{s.status(t.status, 14)} {s.bold(t.ref)} {t.title}  {who} {cost_s}{extra}")
-        for c in store.children(t.id):
+        for c in kids.get(t.id, []):
             walk(c, depth + 1)
 
-    roots = store.roots()
+    roots = kids.get(None, [])
     if not roots:
         return s.dim('No goals yet. Add one with: tinyco goal "..."')
     for r in roots:

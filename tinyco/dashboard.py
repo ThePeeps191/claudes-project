@@ -52,6 +52,7 @@ def snapshot(office: Office) -> dict:
             }
         )
     tasks = []
+    per_task = store.spend_by_task()
     for t in store.tasks():
         tasks.append(
             {
@@ -69,7 +70,7 @@ def snapshot(office: Office) -> dict:
                 "blocked_on": t.blocked_on,
                 "created_at": t.created_at,
                 "updated_at": t.updated_at,
-                "spent": round(store.spent(task_id=t.id), 4),
+                "spent": round(per_task.get(t.id, 0.0), 4),
             }
         )
     inbox = [

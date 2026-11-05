@@ -67,10 +67,18 @@ CREATE TABLE IF NOT EXISTS notes (
     agent TEXT NOT NULL,
     text  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_wakes_status ON wakes(status);
-CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee, status);
+CREATE INDEX IF NOT EXISTS idx_wakes_status ON wakes(status, agent, task_id);
+CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, kind);
+CREATE INDEX IF NOT EXISTS idx_spend_task ON spend(task_id);
+CREATE INDEX IF NOT EXISTS idx_spend_agent ON spend(agent);
+CREATE INDEX IF NOT EXISTS idx_notes_agent ON notes(agent);
 """
+
+# Columns added after 0.1.0, applied to existing databases on open.
+MIGRATIONS = (("tasks", "title_key", "TEXT NOT NULL DEFAULT ''"),)
+POST_MIGRATION = "CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(parent_id, title_key);"
 
 OPEN = ("todo", "in_progress", "in_review", "blocked")
 CLOSED = ("done", "failed", "cancelled")
@@ -142,10 +150,25 @@ class Store:
         self.db.row_factory = sqlite3.Row
         if str(path) != ":memory:":
             self.db.execute("PRAGMA journal_mode=WAL")
+            # WAL + NORMAL never corrupts the database; at worst the last write before a power cut is lost.
+            self.db.execute("PRAGMA synchronous=NORMAL")
             self.db.execute("PRAGMA busy_timeout=10000")  # other processes (dashboard, MCP servers) share the file
         self.db.executescript(SCHEMA)
+        self._migrate()
         self.listeners: list = []
         self.lock = threading.RLock()
+
+    def _migrate(self) -> None:
+        for table, column, decl in MIGRATIONS:
+            cols = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                if column == "title_key":
+                    for r in self.db.execute("SELECT id, title FROM tasks").fetchall():
+                        self.db.execute(
+                            "UPDATE tasks SET title_key = ? WHERE id = ?", (normalize_title(r["title"]), r["id"])
+                        )
+        self.db.execute(POST_MIGRATION)
 
     # -- events ---------------------------------------------------------------
 
@@ -193,6 +216,7 @@ class Store:
         if row is None:
             return None
         d = dict(row)
+        d.pop("title_key", None)
         d["checks"] = json.loads(d["checks"])
         return Task(**d)
 
@@ -208,9 +232,20 @@ class Store:
     ) -> Task:
         now = time.time()
         cur = self.db.execute(
-            "INSERT INTO tasks (parent_id, title, description, assignee, creator, checks, reviewer, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (parent_id, title, description, assignee, creator, json.dumps(checks or []), reviewer, now, now),
+            "INSERT INTO tasks (parent_id, title, title_key, description, assignee, creator, checks, reviewer,"
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                parent_id,
+                title,
+                normalize_title(title),
+                description,
+                assignee,
+                creator,
+                json.dumps(checks or []),
+                reviewer,
+                now,
+                now,
+            ),
         )
         return self.task(cur.lastrowid)  # type: ignore[return-value]
 
@@ -226,9 +261,36 @@ class Store:
             rows = self.db.execute("SELECT * FROM tasks ORDER BY id").fetchall()
         return [self._task(r) for r in rows]  # type: ignore[misc]
 
-    def children(self, task_id: int) -> list[Task]:
-        rows = self.db.execute("SELECT * FROM tasks WHERE parent_id = ? ORDER BY id", (task_id,)).fetchall()
+    def children(self, task_id: int, status: tuple[str, ...] | None = None) -> list[Task]:
+        sql, args = "SELECT * FROM tasks WHERE parent_id = ?", [task_id]
+        if status:
+            sql += f" AND status IN ({','.join('?' * len(status))})"
+            args.extend(status)
+        rows = self.db.execute(sql + " ORDER BY id", args).fetchall()
         return [self._task(r) for r in rows]  # type: ignore[misc]
+
+    def has_open_children(self, task_id: int) -> bool:
+        q = f"SELECT 1 FROM tasks WHERE parent_id = ? AND status IN ({','.join('?' * len(OPEN))}) LIMIT 1"
+        return self.db.execute(q, (task_id, *OPEN)).fetchone() is not None
+
+    def child_counts(self, task_id: int) -> dict[str, int]:
+        rows = self.db.execute("SELECT status, COUNT(*) n FROM tasks WHERE parent_id = ? GROUP BY status", (task_id,))
+        return {r["status"]: r["n"] for r in rows}
+
+    def recent_children(self, task_id: int, status: tuple[str, ...], limit: int) -> list[Task]:
+        """Most recently updated children in ``status``, newest first."""
+        q = (
+            f"SELECT * FROM tasks WHERE parent_id = ? AND status IN ({','.join('?' * len(status))})"
+            " ORDER BY updated_at DESC, id DESC LIMIT ?"
+        )
+        return [self._task(r) for r in self.db.execute(q, (task_id, *status, limit))]  # type: ignore[misc]
+
+    def open_tasks_for(self, agent: str, exclude: int | None = None, limit: int = 10) -> list[Task]:
+        q = (
+            f"SELECT * FROM tasks WHERE assignee = ? AND status IN ({','.join('?' * len(OPEN))}) AND id != ?"
+            " ORDER BY id LIMIT ?"
+        )
+        return [self._task(r) for r in self.db.execute(q, (agent, *OPEN, exclude or -1, limit))]  # type: ignore[misc]
 
     def ancestry(self, task_id: int) -> list[Task]:
         """Root-first chain of tasks ending at ``task_id``."""
@@ -240,12 +302,13 @@ class Store:
         return list(reversed(chain))
 
     def find_open_sibling(self, parent_id: int | None, title: str) -> Task | None:
-        key = normalize_title(title)
-        siblings = self.children(parent_id) if parent_id is not None else self.roots()
-        for t in siblings:
-            if t.is_open and normalize_title(t.title) == key:
-                return t
-        return None
+        where = "parent_id = ?" if parent_id is not None else "parent_id IS NULL"
+        args: list = [parent_id] if parent_id is not None else []
+        q = (
+            f"SELECT * FROM tasks WHERE {where} AND title_key = ? AND status IN ({','.join('?' * len(OPEN))})"
+            " ORDER BY id LIMIT 1"
+        )
+        return self._task(self.db.execute(q, (*args, normalize_title(title), *OPEN)).fetchone())
 
     def roots(self) -> list[Task]:
         rows = self.db.execute("SELECT * FROM tasks WHERE parent_id IS NULL ORDER BY id").fetchall()
@@ -254,6 +317,8 @@ class Store:
     def update_task(self, task_id: int, **fields: Any) -> Task:
         if "checks" in fields:
             fields["checks"] = json.dumps(fields["checks"])
+        if "title" in fields:
+            fields["title_key"] = normalize_title(fields["title"])
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k} = ?" for k in fields)
         self.db.execute(f"UPDATE tasks SET {cols} WHERE id = ?", (*fields.values(), task_id))
@@ -372,11 +437,27 @@ class Store:
         ).fetchall()
         return {r["agent"]: dict(r) for r in rows}
 
+    def spend_breakdown(self, by: str) -> list[dict]:
+        """Totals grouped by ``agent`` or ``model``: calls, tokens, cache use and USD."""
+        assert by in ("agent", "model")
+        rows = self.db.execute(
+            f"SELECT {by} AS key, COUNT(*) calls, SUM(input) input, SUM(output) output, SUM(cache_read) cache_read,"
+            f" SUM(cache_write) cache_write, SUM(usd) usd FROM spend GROUP BY {by} ORDER BY usd DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def spend_by_task(self) -> dict[int, float]:
+        rows = self.db.execute("SELECT task_id, SUM(usd) usd FROM spend WHERE task_id IS NOT NULL GROUP BY task_id")
+        return {r["task_id"]: float(r["usd"]) for r in rows}
+
     def subtree_spend(self, task_id: int) -> float:
-        total = self.spent(task_id=task_id)
-        for c in self.children(task_id):
-            total += self.subtree_spend(c.id)
-        return total
+        """Spend on ``task_id`` and everything under it (one recursive query)."""
+        row = self.db.execute(
+            "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT t.id FROM tasks t JOIN sub ON t.parent_id = sub.id)"
+            " SELECT COALESCE(SUM(s.usd), 0) FROM spend s JOIN sub ON s.task_id = sub.id",
+            (task_id,),
+        ).fetchone()
+        return float(row[0])
 
     # -- notes ----------------------------------------------------------------
 

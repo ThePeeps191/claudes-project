@@ -215,11 +215,10 @@ class Office:
         return f"Updated {t.ref}" + (f" and handed it to {new_assignee}." if reopen else ".")
 
     def _cancel_open_children(self, task_id: int, by: str) -> None:
-        for c in self.store.children(task_id):
-            if c.is_open:
-                self.store.update_task(c.id, status="cancelled", blocked_on=None)
-                self.store.event("task_cancelled", by, c.id, cascade=True)
-                self._cancel_open_children(c.id, by)
+        for c in self.store.children(task_id, status=("todo", "in_progress", "in_review", "blocked")):
+            self.store.update_task(c.id, status="cancelled", blocked_on=None)
+            self.store.event("task_cancelled", by, c.id, cascade=True)
+            self._cancel_open_children(c.id, by)
 
     # -- doing the work ---------------------------------------------------------
 
@@ -254,7 +253,7 @@ class Office:
             raise OfficeError(f"{t.ref} is assigned to {t.assignee}, not you")
         if t.status not in ("todo", "in_progress"):
             raise OfficeError(f"{t.ref} is {t.status}; it can't be submitted now")
-        open_children = [c for c in self.store.children(t.id) if c.is_open]
+        open_children = self.store.children(t.id, status=("todo", "in_progress", "in_review", "blocked"))
         if open_children:
             refs = ", ".join(f"{c.ref} ({c.assignee}, {c.status})" for c in open_children)
             raise OfficeError(f"{t.ref} still has open subtasks: {refs}. Wait for them or cancel them first.")
@@ -273,7 +272,10 @@ class Office:
             by,
             t.id,
             passed=passed,
-            results=[{"command": r.command, "exit": r.exit_code} for r in results],
+            results=[
+                {"command": r.command, "exit": r.exit_code, **({} if r.passed else {"output": tail(r.output, 1500)})}
+                for r in results
+            ],
         )
         if not passed:
             attempts = t.attempts + 1
