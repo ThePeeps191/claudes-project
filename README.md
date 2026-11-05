@@ -9,6 +9,7 @@
   <a href="#try-it-in-10-seconds">Try it</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#companytoml">Config</a> ·
+  <a href="#bring-your-own-agent-claude-code">Claude Code agents</a> ·
   <a href="#the-dashboard">Dashboard</a> ·
   <a href="#safety">Safety</a> ·
   <a href="#faq">FAQ</a>
@@ -124,6 +125,8 @@ title = "Software Engineer"
 reports_to = "ceo"
 model = "claude-opus-5-5" # any Claude model id
 effort = "medium"
+web = false               # server-side web search + fetch
+runtime = "api"           # api | claude-code
 budget_usd = 5.0
 max_turns = 40            # model calls per wake-up
 ```
@@ -131,6 +134,28 @@ max_turns = 40            # model calls per wake-up
 Any shape of org works, as long as exactly one agent has no `reports_to`. Deeper hierarchies, several specialists, research desks: the `research` template is an editor, a researcher and a fact-checker producing Markdown reports.
 
 Prices for budget accounting live in `tinyco/pricing.py`. Override them per model under `[company.pricing."<model-id>"]` with `input`, `output` and `cache_read` in USD per million tokens.
+
+## Bring your own agent: Claude Code
+
+Any agent can be a [Claude Code](https://code.claude.com) session instead of a direct API agent:
+
+```toml
+[company]
+shell = "allow"            # headless Claude Code can't stop to ask, so run this in a container/VM
+
+[agents.engineer]
+title = "Software Engineer"
+reports_to = "ceo"
+runtime = "claude-code"    # each wake runs `claude -p` in the workspace
+model = "claude-sonnet-5-5"
+budget_usd = 5.0
+```
+
+Each wake runs `claude -p <briefing> --output-format json` in the workspace. Claude Code does the hands-on work with its own tools (editing, shell, search) and gets tinyco's org tools (`submit`, `create_task`, `review`, `ask_human`, ...) from a small built-in MCP server (`--mcp-config ... --strict-mcp-config`). The rules don't change: checks still decide when a task is done, and failures still escalate. The agent's limits are passed through as `--max-turns` and `--max-budget-usd`, and the run's `total_cost_usd` (Claude Code's own estimate) counts toward tinyco budgets. Claude Code uses whatever login it already has. Mixed companies work too, for example an API CEO directing Claude Code engineers.
+
+## Web access
+
+Set `web = true` on an agent to give it Claude's server-side web search and web fetch tools. The `research` template turns it on for the researcher and the fact-checker. Each search adds $0.01 to the agent's spend, at the list price of $10 per 1,000 searches.
 
 ## The dashboard
 
@@ -167,6 +192,7 @@ Agents write files and run commands, so treat a run like letting a contractor us
 - File tools are confined to the workspace directory.
 - Commands run without `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` in their environment.
 - Budgets are hard caps checked before each model call.
+- Agents with `runtime = "claude-code"` run Claude Code with `--permission-mode bypassPermissions`, so they only run when `shell = "allow"` (or `tinyco run --yes`). Run those companies in a container or VM.
 
 ## Cost
 
@@ -180,7 +206,7 @@ Your actual spend depends on the goal and the models. `tinyco status` shows it p
 
 ## FAQ
 
-**Which models?** Claude, through the official `anthropic` SDK, with streaming, adaptive thinking, prompt caching and server-side refusal fallbacks. Any Claude model id works per agent.
+**Which models?** Claude. API agents use the official `anthropic` SDK, with streaming, adaptive thinking, prompt caching and server-side refusal fallbacks. Any Claude model id works per agent. Agents with `runtime = "claude-code"` run through Claude Code instead.
 
 **Do agents run in parallel?** Yes, with `tinyco run -j 3` or `parallel = 3` under `[company]`. Different agents work at the same time, and a single agent never handles two wake-ups at once. The default is 1: runs are easier to follow, and agents can't edit the same files at the same moment. With parallel runs, spend can pass a budget by up to one model call per running agent before the cap stops further calls.
 
@@ -194,7 +220,7 @@ Your actual spend depends on the goal and the models. `tinyco status` shows it p
 
 tinyco is alpha. The core loop, the rules and the dashboard are covered by an offline test suite, including a test that drives the real `anthropic` SDK over a mock transport to check the exact requests. Next:
 
-- [ ] Adapters for agents you already use (Claude Code, other CLIs) via an MCP server for the org tools
+- [ ] More runtimes on the same MCP bridge (other coding-agent CLIs)
 - [ ] Scheduled goals (`tinyco goal --every monday`)
 - [ ] A git branch per task, merged when it's done
 - [ ] More templates

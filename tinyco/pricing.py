@@ -19,6 +19,7 @@ PRICES: dict[str, tuple[float, float, float]] = {
     "claude-haiku-5-5": (0.10, 0.50, 0.01),
 }
 CACHE_WRITE_MULTIPLIER = 1.25  # 5-minute cache writes
+WEB_SEARCH_USD = 10.00 / 1000  # per search
 FALLBACK = PRICES["claude-opus-5-5"]
 
 
@@ -36,4 +37,4 @@ def cost(model: str, usage: dict, overrides: dict | None = None) -> float:
         + usage.get("output", 0) * out
         + usage.get("cache_read", 0) * cache_read
         + usage.get("cache_write", 0) * inp * CACHE_WRITE_MULTIPLIER
-    ) / 1_000_000
+    ) / 1_000_000 + usage.get("web_searches", 0) * WEB_SEARCH_USD

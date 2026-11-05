@@ -140,7 +140,9 @@ class Store:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL") if str(path) != ":memory:" else None
+        if str(path) != ":memory:":
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("PRAGMA busy_timeout=10000")  # other processes (dashboard, MCP servers) share the file
         self.db.executescript(SCHEMA)
         self.listeners: list = []
         self.lock = threading.RLock()
