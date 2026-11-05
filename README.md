@@ -93,7 +93,7 @@ flowchart LR
 - **Tasks.** Each task has an assignee, an optional reviewer, and checks (shell commands run from the workspace root). An agent can't create a task without a definition of done.
 - **Wakes.** A small queue in SQLite. Each wake is one bounded session: the agent gets its brief and its tools, works, and ends its turn. Nothing polls.
 - **Tools.** Org tools (`create_task`, `submit`, `review`, `update_task`, `comment`, `ask_human`, `view_task`, `note`) and workspace tools (`list_files`, `read_file`, `write_file`, `edit_file`, `run`). Every agent gets the same tool list on every call, so prompt caching works across the whole company.
-- **Memory.** Agents save short notes that appear in every later briefing. Task comments, summaries and check results carry the rest.
+- **Memory.** Agents save short notes that appear in their later briefings. Notes marked `shared` go into every agent's briefing, which is how a lead sets conventions such as layout, tools and interfaces once for the whole team. Task comments, summaries and check results carry the rest.
 - **Git history.** If the workspace is a git repo (`tinyco init` makes one), every finished task is committed with the agent who did it as the author, so `git log` reads like a team's history.
 - **Humans.** Agents can `ask_human`. Goals can require your sign-off (`--review human`). Escalations that reach the top land in your inbox.
 
@@ -206,13 +206,14 @@ tinyco export -o run.html
 | Command | |
 |---|---|
 | `tinyco init [-t startup\|solo\|research]` | create `company.toml` |
-| `tinyco goal "..." [--check CMD]... [--review human\|AGENT] [-d DETAILS]` | give the company a goal |
+| `tinyco goal "..." [--check CMD]... [--review human\|AGENT] [-d DETAILS] [-f SPEC.md]` | give the company a goal |
 | `tinyco run [-j N] [--watch] [--yes] [--budget USD] [--max-wakes N] [-v]` | work until idle (`-j`: agents working at once; `--watch`: stay up, run routines) |
 | `tinyco routines` | list routines and when they run next |
 | `tinyco status` | task tree, spend, queue, inbox |
 | `tinyco inbox` / `reply ID TEXT` / `approve ID` / `reject ID NOTES` | the human's side |
 | `tinyco task ID` / `log [--task ID]` / `org` | inspect |
 | `tinyco cancel ID` | cancel a task and its open subtasks |
+| `tinyco reopen ID ["guidance"]` | send a failed, blocked or finished task back to its assignee with a clean slate |
 | `tinyco dashboard [--port N]` | live web dashboard |
 | `tinyco export [-o FILE]` | self-contained HTML snapshot of the run, for sharing |
 | `tinyco cost` | spend by agent, model, goal and task, with prompt-cache hit rates |

@@ -244,3 +244,50 @@ def test_manager_brief_is_bounded(office):
     assert "… and 5 more open" in brief and "… and 32 earlier closed subtasks" in brief
     assert brief.count("\n- T") < 30  # bounded, not 60 lines
     assert "did part 41" in brief  # the most recent completions keep their summaries
+
+
+def test_shared_notes_reach_every_agent(office):
+    from tinyco.briefing import briefing
+    from tinyco.store import Wake
+
+    office.start_goal("Goal")
+    office.create_task("ceo", 1, "Part", "engineer", "", ["true"])
+    box = Toolbox(office, "ceo", office.get(1))
+    out, err = box.call("note", {"text": "Code lives in src/, tests use pytest.", "shared": True})
+    assert not err and "whole company" in out
+    box.call("note", {"text": "private ceo thought"})
+    brief = briefing(office, office.company.agents["engineer"], Wake(0, "engineer", 2, [{"reason": "assigned"}], "", 0))
+    assert "Company notes" in brief and "ceo: Code lives in src/, tests use pytest." in brief
+    assert "private ceo thought" not in brief
+    out, _ = box.call("note", {"text": "x" * 2000})
+    assert "Trimmed" in out
+
+
+def test_human_can_reopen_failed_task_with_guidance(office):
+    office.start_goal("Goal")
+    office.create_task("ceo", 1, "Part", "engineer", "", ["false"])
+    for _ in range(3):
+        office.submit("engineer", 2, "try")
+    assert office.get(2).status == "failed"
+    msg = office.reopen(2, "Use the stdlib csv module.")
+    assert "Reopened T2" in msg
+    t = office.get(2)
+    assert (t.status, t.attempts) == ("todo", 0)
+    wake = [w for w in office.store.pending_wakes() if w.agent == "engineer"][0]
+    assert wake.reasons[-1] == {"reason": "reopened", "text": "Use the stdlib csv module."}
+    with pytest.raises(OfficeError, match="already open"):
+        office.reopen(2)
+
+
+def test_goal_from_file(tmp_path, monkeypatch):
+    from tinyco.cli import main
+    from tinyco.config import load
+    from tinyco.store import Store
+
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    (tmp_path / "spec.md").write_text("# Spec\nMust support --verbose.\n")
+    assert main(["goal", "Build the CLI", "-f", "spec.md"]) == 0
+    assert main(["goal", "Other", "-f", "missing.md"]) == 1
+    company = load(tmp_path)
+    assert "Must support --verbose." in Store(company.state_dir / "state.db").task(1).description

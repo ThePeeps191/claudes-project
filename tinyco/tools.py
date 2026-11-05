@@ -123,10 +123,11 @@ TOOLS: list[dict] = [
     {
         "name": "note",
         "description": (
-            "Save a short note to your own memory. Each wake-up starts fresh; your recent notes are included in "
-            "every briefing. Good for decisions, conventions, and where things live."
+            "Save a short note. Each wake-up starts fresh; your recent notes are included in every briefing. "
+            "With shared=true the note goes to the whole company (every agent's briefing): use that for "
+            "conventions and decisions others must follow, like layout, tools and interfaces."
         ),
-        "input_schema": _obj({"text": _STR}, ["text"]),
+        "input_schema": _obj({"text": _STR, "shared": {"type": "boolean"}}, ["text"]),
     },
     {
         "name": "list_files",
@@ -309,8 +310,8 @@ class Toolbox:
 
         return describe_task(self.office, self.office.get(_int(task_id)))
 
-    def t_note(self, text) -> str:
-        return self.office.note(self.agent, text)
+    def t_note(self, text, shared=False) -> str:
+        return self.office.note(self.agent, text, shared=shared)
 
     # -- workspace tools ----------------------------------------------------------
 

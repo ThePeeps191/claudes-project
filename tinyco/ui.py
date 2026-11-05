@@ -139,6 +139,12 @@ class Feed:
             msg = s.bold(s.green(f"★ goal {t} complete: {d.get('title', '')}"))
         elif k in ("task_failed", "escalated"):
             msg = f"{s.red('⚠')} {t} escalated{' to ' + d['to'] if d.get('to') else ''}: {d.get('why', '')}"
+        elif k == "shared_note":
+            msg = f"  📌 {who} shared: {_one_line(d.get('text', ''), 140)}"
+        elif k == "reopened":
+            msg = f"{s.yellow('↺')} {t} reopened" + (
+                f": {_one_line(d.get('guidance'), 120)}" if d.get("guidance") else ""
+            )
         elif k == "routine_fired":
             msg = f"{s.bold('⟳ routine')} {d.get('routine')} → {t}"
         elif k == "routine_skipped":

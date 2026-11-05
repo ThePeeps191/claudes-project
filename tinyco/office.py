@@ -17,6 +17,7 @@ from .config import Company
 from .store import CLOSED, Store, Task
 
 HUMAN = "human"
+COMPANY_NOTES = "*"  # notes.agent value for notes shared with everyone
 OUTPUT_TAIL = 4000
 
 # approve(kind, detail) -> bool. kind is "shell" or "check".
@@ -366,9 +367,36 @@ class Office:
         self.store.wake(who, t.id, "human_replied", text=text)
         return f"Replied to {t.ref}; {who} will pick it up on the next run."
 
-    def note(self, by: str, text: str) -> str:
-        self.store.add_note(by, text.strip())
-        return "Saved. You'll see this note in future briefings."
+    NOTE_LIMIT = 600
+
+    def note(self, by: str, text: str, shared: bool = False) -> str:
+        text = " ".join(text.split())
+        if not text:
+            raise OfficeError("the note is empty")
+        clipped = len(text) > self.NOTE_LIMIT
+        text = text[: self.NOTE_LIMIT]
+        if shared:
+            self.store.add_note(COMPANY_NOTES, f"{by}: {text}")
+            self.store.event("shared_note", by, None, text=text)
+            msg = "Shared with the whole company; it will appear in everyone's briefings."
+        else:
+            self.store.add_note(by, text)
+            msg = "Saved. You'll see this note in future briefings."
+        return msg + (f" (Trimmed to {self.NOTE_LIMIT} characters; keep notes short.)" if clipped else "")
+
+    def reopen(self, task_id: int, guidance: str = "") -> str:
+        """Human: send a failed, blocked, cancelled or finished task back to its assignee with a clean slate."""
+        t = self.get(task_id)
+        if t.status in ("todo", "in_progress", "in_review"):
+            raise OfficeError(f"{t.ref} is already open ({t.status})")
+        if t.parent_id is not None and not self.get(t.parent_id).is_open:
+            raise OfficeError(f"{t.ref}'s parent T{t.parent_id} is closed; reopen that first")
+        self.store.update_task(t.id, status="todo", attempts=0, blocked_on=None)
+        self.store.event("reopened", HUMAN, t.id, guidance=guidance)
+        if guidance:
+            self.store.event("comment", HUMAN, t.id, text=guidance, notify=[t.assignee])
+        self.store.wake(t.assignee, t.id, "reopened", text=guidance)
+        return f"Reopened {t.ref} for {t.assignee}."
 
     # -- lifecycle --------------------------------------------------------------
 

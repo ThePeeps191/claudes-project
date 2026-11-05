@@ -86,8 +86,15 @@ def cmd_init(args) -> int:
 
 def cmd_goal(args) -> int:
     company, store, office = open_company(args)
+    description = args.description or ""
+    if args.file:
+        try:
+            description = (description + "\n\n" if description else "") + Path(args.file).read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"tinyco: can't read {args.file}: {e}", file=sys.stderr)
+            return 1
     try:
-        t = office.start_goal(args.title, args.description or "", args.check, args.review)
+        t = office.start_goal(args.title, description, args.check, args.review)
     except OfficeError as e:
         print(f"tinyco: {e}", file=sys.stderr)
         return 1
@@ -304,6 +311,10 @@ def cmd_reject(args) -> int:
     return _act(args, lambda o: o.human_review(_tid(args.id), False, args.notes))
 
 
+def cmd_reopen(args) -> int:
+    return _act(args, lambda o: o.reopen(args.id, args.guidance or ""))
+
+
 def cmd_cancel(args) -> int:
     return _act(args, lambda o: o.update_task("human", _tid(args.id), cancel=True))
 
@@ -465,6 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("goal", help="give the company a goal")
     s.add_argument("title")
     s.add_argument("--description", "-d", help="more detail for the goal")
+    s.add_argument("--file", "-f", metavar="PATH", help="read the goal's details from a file (e.g. a spec)")
     s.add_argument(
         "--check",
         "-c",
@@ -522,6 +534,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id", type=_tid)
     s.add_argument("notes")
     s.set_defaults(fn=cmd_reject)
+
+    s = sub.add_parser("reopen", help="send a failed, blocked or finished task back to its assignee")
+    s.add_argument("id", type=_tid)
+    s.add_argument("guidance", nargs="?", help="what to do differently this time")
+    s.set_defaults(fn=cmd_reopen)
 
     s = sub.add_parser("cancel", help="cancel a task and its open subtasks")
     s.add_argument("id", type=_tid)
