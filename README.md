@@ -167,6 +167,14 @@ tinyco dashboard
 
 A local web page (standard library only, bound to 127.0.0.1) that follows the company live while `tinyco run` works in a terminal. It shows the org chart with each agent's spend and current task, the task tree with cost per subtree, a live activity feed, and a drawer for each task with its checks, submissions and history. You can create goals, answer questions, and approve or reject work from it.
 
+### Share a run
+
+```
+tinyco export -o run.html
+```
+
+`tinyco export` writes the dashboard as a single self-contained HTML file with the whole run embedded: org chart, task tree, every event, and cost. It's read-only, has no server behind it, and opens from disk or any static host. It contains your task descriptions, commands and agent messages, so read it before you share it.
+
 ## CLI
 
 | Command | |
@@ -179,6 +187,7 @@ A local web page (standard library only, bound to 127.0.0.1) that follows the co
 | `tinyco task ID` / `log [--task ID]` / `org` | inspect |
 | `tinyco cancel ID` | cancel a task and its open subtasks |
 | `tinyco dashboard [--port N]` | live web dashboard |
+| `tinyco export [-o FILE]` | self-contained HTML snapshot of the run, for sharing |
 | `tinyco demo [PATH] [--fast]` | scripted demo, no API key |
 
 `-C DIR` before any command points at a company in another directory. Otherwise tinyco searches upward for `company.toml`.

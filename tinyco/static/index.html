@@ -103,6 +103,7 @@ a:hover { text-decoration: underline; }
   display: flex; flex-direction: column; gap: 10px; }
 .modal label { font-size: 12px; color: var(--muted); }
 .row { display: flex; gap: 8px; justify-content: flex-end; }
+body.snapshot #new-goal, body.snapshot .inbox button, body.snapshot .inbox input, body.snapshot .drawer .row { display: none; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line);
   padding: 8px 14px; border-radius: 10px; z-index: 20; display: none; max-width: 90vw; }
 </style>
@@ -136,6 +137,16 @@ a:hover { text-decoration: underline; }
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+// A snapshot export (tinyco export) embeds its data and has no server behind it.
+const SNAP = window.TINYCO_SNAPSHOT || null;
+async function api(path) {
+  if (!SNAP) return (await fetch(path)).json();
+  if (path === "/api/state") return SNAP.state;
+  const q = new URLSearchParams(path.split("?")[1] || "");
+  if (q.has("task")) return SNAP.events.filter((e) => e.task_id === Number(q.get("task")));
+  const after = Number(q.get("after") || 0);
+  return SNAP.events.filter((e) => e.id > after);
+}
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -287,7 +298,7 @@ function addEvents(events) {
 async function showTask(id) {
   openTask = id;
   const t = state.tasks.find((x) => x.id === id); if (!t) return;
-  const evs = await (await fetch(`/api/events?task=${id}`)).json();
+  const evs = await api(`/api/events?task=${id}`);
   const kids = state.tasks.filter((x) => x.parent_id === id);
   const parent = state.tasks.find((x) => x.id === t.parent_id);
   const d = $("drawer"); d.replaceChildren(...nodes(
@@ -324,13 +335,21 @@ $("g-save").onclick = async () => {
 
 async function refresh() {
   try {
-    state = await (await fetch("/api/state")).json();
+    state = await api("/api/state");
     for (const a of state.agents) colorFor(a.name);
     renderHeader(); renderAgents(); renderTasks(); renderInbox();
-    addEvents(await (await fetch(`/api/events?after=${lastEvent}`)).json());
+    addEvents(await api(`/api/events?after=${lastEvent}`));
   } catch (e) { $("status").className = "pill"; $("status").textContent = "disconnected"; }
 }
-refresh(); setInterval(refresh, 1500);
+if (SNAP) {
+  document.body.classList.add("snapshot");
+  refresh().then(() => {
+    const st = $("status"); st.className = "pill";
+    st.textContent = "snapshot · " + new Date(SNAP.exported_at * 1000).toLocaleString();
+  });
+} else {
+  refresh(); setInterval(refresh, 1500);
+}
 </script>
 </body>
 </html>
