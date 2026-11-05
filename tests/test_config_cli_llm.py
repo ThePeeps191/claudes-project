@@ -250,3 +250,22 @@ def test_web_searches_show_up_in_events(office):
     Runner(office, model).run(max_wakes=1)
     ev = office.store.events(kinds=("web_search",))
     assert ev and ev[0]["data"]["query"] == "tinyco"
+
+
+def test_cli_cost_report(tmp_path, monkeypatch, capsys):
+    from tinyco.config import load
+    from tinyco.office import Office
+    from tinyco.store import Store
+
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    assert main(["cost"]) == 0
+    assert "No model spend yet" in capsys.readouterr().out
+    company = load(tmp_path)
+    office = Office(company, Store(company.state_dir / "state.db"))
+    office.start_goal("Build it")
+    usage = {"input": 1000, "output": 500, "cache_read": 9000, "cache_write": 0}
+    office.store.record_spend("ceo", 1, "claude-opus-5-5", usage, pricing.cost("claude-opus-5-5", usage))
+    assert main(["cost"]) == 0
+    out = capsys.readouterr().out
+    assert "By agent" in out and "ceo" in out and "90%" in out and "Build it" in out

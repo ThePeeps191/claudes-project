@@ -313,6 +313,55 @@ def cmd_demo(args) -> int:
     return 0
 
 
+def cmd_cost(args) -> int:
+    company, store, office = open_company(args)
+    style = Style(use_color())
+    total = store.spent()
+    print(style.bold(f"{company.name}: ${total:.2f} of ${company.budget_usd:.2f} budget"))
+    if not total:
+        print(style.dim("No model spend yet."))
+        return 0
+
+    def hit_rate(r: dict) -> str:
+        prompt = (r["input"] or 0) + (r["cache_read"] or 0) + (r["cache_write"] or 0)
+        return f"{100 * (r['cache_read'] or 0) / prompt:.0f}%" if prompt else "-"
+
+    def table(title: str, rows: list[dict], key: str) -> None:
+        print()
+        print(style.bold(title))
+        print(
+            style.dim(
+                f"  {key:<28} {'calls':>6} {'input':>10} {'cached':>10} {'output':>9} {'cache hit':>9} {'usd':>9}"
+            )
+        )
+        for r in rows:
+            print(
+                f"  {str(r['key'])[:28]:<28} {r['calls']:>6} {r['input'] or 0:>10,} {r['cache_read'] or 0:>10,} "
+                f"{r['output'] or 0:>9,} {hit_rate(r):>9} {r['usd'] or 0:>9.2f}"
+            )
+
+    table("By agent", store.spend_breakdown("agent"), "agent")
+    table("By model", store.spend_breakdown("model"), "model")
+
+    roots = store.roots()
+    if roots:
+        print()
+        print(style.bold("By goal"))
+        for t in roots:
+            print(f"  {t.ref:<6} {t.title[:52]:<52} {t.status:<12} ${store.subtree_spend(t.id):.2f}")
+    per_task = sorted(store.spend_by_task().items(), key=lambda kv: -kv[1])[:5]
+    if per_task:
+        print()
+        print(style.bold("Most expensive tasks (own spend, excluding subtasks)"))
+        for tid, usd in per_task:
+            t = store.task(tid)
+            if t:
+                print(f"  {t.ref:<6} {t.title[:52]:<52} {t.assignee:<12} ${usd:.2f}")
+    print()
+    print(style.dim("Cache hit = share of prompt tokens served from the prompt cache (billed at a fraction of input)."))
+    return 0
+
+
 def cmd_export(args) -> int:
     from .export import render
 
@@ -429,6 +478,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fast", action="store_true", help="no pauses")
     s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
     s.set_defaults(fn=cmd_demo)
+
+    s = sub.add_parser("cost", help="spend by agent, model, goal and task, with prompt-cache hit rates")
+    s.set_defaults(fn=cmd_cost)
 
     s = sub.add_parser("export", help="write a self-contained HTML snapshot of the company's run")
     s.add_argument("-o", "--output", help="output file (default: tinyco-<company>.html)")

@@ -20,7 +20,7 @@
 You give the company a goal. The CEO agent breaks it into tasks and hands them to its reports. Engineers write code and run it. Reviewers push back. Every task carries a **definition of done** (a command that has to exit 0, a reviewer, or both), so "done" means the checks passed, not that an agent said so. When there's nothing to do, nothing runs.
 
 ```
-pip install git+https://github.com/ThePeeps191/claudes-project
+pip install git+https://github.com/ThePeeps191/tinyco
 tinyco init
 tinyco goal "Build a CLI that converts CSV files to JSON" --check "python -m pytest -q"
 tinyco run
@@ -31,7 +31,7 @@ tinyco run
 No API key needed:
 
 ```
-pip install git+https://github.com/ThePeeps191/claudes-project
+pip install git+https://github.com/ThePeeps191/tinyco
 tinyco demo
 ```
 
@@ -188,6 +188,7 @@ tinyco export -o run.html
 | `tinyco cancel ID` | cancel a task and its open subtasks |
 | `tinyco dashboard [--port N]` | live web dashboard |
 | `tinyco export [-o FILE]` | self-contained HTML snapshot of the run, for sharing |
+| `tinyco cost` | spend by agent, model, goal and task, with prompt-cache hit rates |
 | `tinyco demo [PATH] [--fast]` | scripted demo, no API key |
 
 `-C DIR` before any command points at a company in another directory. Otherwise tinyco searches upward for `company.toml`.
@@ -213,7 +214,22 @@ The biggest lever is the event-driven design: agents that have nothing to do are
 - **Effort per agent.** Leads at `high`, hands-on roles at `medium` is a sensible start. Lower effort means fewer and terser tool calls.
 - **Bounded sessions.** Each wake is capped at `max_turns` calls, and each agent starts from a brief instead of the whole history.
 
-Your actual spend depends on the goal and the models. `tinyco status` shows it per agent, and `tinyco task ID` shows it per task subtree.
+- **Briefs that replace lookups.** Every wake brief includes a compact file tree of the workspace and, after a failed submission, the failing checks' output, so agents don't spend model calls rediscovering either. Managers get a bounded summary of their subtasks (counts, open ones, recent completions with summaries) rather than one line per subtask, however big the tree grows.
+- **Batched tool calls.** Agents are told to make independent tool calls in the same turn, which means fewer round trips that re-send the conversation.
+
+Your actual spend depends on the goal and the models. `tinyco cost` breaks it down by agent, model, goal and task, and shows how much of each agent's prompt was served from the cache.
+
+## Performance
+
+tinyco's own overhead per wake (scheduling, SQLite, the brief, running a trivial check) is a few milliseconds. Model calls take seconds, so they're what you're waiting on. Measured with `benchmarks/scheduler.py`: a CEO delegates N subtasks to 10 engineers, using a zero-latency scripted model so only tinyco's own time is counted.
+
+| subtasks | wakes | total | per wake |
+|---:|---:|---:|---:|
+| 50 | 52 | 0.15 s | 3.0 ms |
+| 300 | 302 | 1.1 s | 3.7 ms |
+| 1000 | 1002 | 4.7 s | 4.7 ms |
+
+Fifty finished subtasks still wake the CEO only once, because wakes for the same agent and task are merged. Most of what remains is starting a process for each check command. Run `python benchmarks/scheduler.py --tasks 300 --profile` to measure on your machine.
 
 ## FAQ
 
@@ -241,7 +257,7 @@ Ideas and PRs welcome.
 ## Development
 
 ```
-git clone https://github.com/ThePeeps191/claudes-project && cd claudes-project
+git clone https://github.com/ThePeeps191/tinyco && cd tinyco
 pip install -e ".[dev]"
 pytest -q && ruff check .
 ```

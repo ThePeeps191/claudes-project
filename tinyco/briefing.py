@@ -28,6 +28,7 @@ How work happens here:
 - A task is finished only when its checks pass and its reviewer (if any) approves. Call `submit` to run the checks. If they fail you'll see the output; fix the work and submit again. Repeated failures get escalated to whoever assigned the task.
 - When you delegate with `create_task`, write a clear description and give it checks that exit 0 only when the work is right (usually tests). Vague tasks get vague work. After delegating, end your turn: you'll be woken when subtasks finish, and nobody is billed while you wait.
 - Do the work in front of you and then end your turn. Don't wait or poll.
+- When several tool calls don't depend on each other (reading a few files, writing several files), make them together in one turn rather than one per turn.
 - All files live in a shared workspace; paths are relative to its root. If something only a human can decide is blocking you, use `ask_human`.
 """
 
@@ -127,6 +128,90 @@ def _activity(office: Office, t: Task, limit: int = 12) -> list[str]:
     return out
 
 
+SHOW_OPEN = 15  # open subtasks listed in full
+SHOW_CLOSED = 8  # most recently closed subtasks listed (with summaries)
+
+
+def _subtasks(office: Office, t: Task) -> list[str]:
+    """Subtask status for a brief, bounded in size however many subtasks there are."""
+    counts = office.store.child_counts(t.id)
+    total = sum(counts.values())
+    if not total:
+        return []
+    tally = ", ".join(f"{n} {status.replace('_', ' ')}" for status, n in sorted(counts.items()))
+    out = ["", f"Subtasks ({total}: {tally}):"]
+    open_ = office.store.children(t.id, status=("todo", "in_progress", "in_review", "blocked"))
+    out += [f"- {_status_line(k)}" for k in open_[:SHOW_OPEN]]
+    if len(open_) > SHOW_OPEN:
+        out.append(f"- … and {len(open_) - SHOW_OPEN} more open (use view_task on any of them)")
+    closed = office.store.recent_children(t.id, ("done", "failed", "cancelled"), SHOW_CLOSED)
+    for k in closed:
+        line = f"- {_status_line(k)}"
+        if k.summary and k.status == "done":
+            line += f"\n  summary: {k.summary[:300]}"
+        out.append(line)
+    n_closed = sum(n for s, n in counts.items() if s in ("done", "failed", "cancelled"))
+    if n_closed > len(closed):
+        out.append(f"- … and {n_closed - len(closed)} earlier closed subtasks")
+    return out
+
+
+def _last_failure(office: Office, t: Task) -> list[str]:
+    """If the latest submission's checks failed, show what failed so nobody has to re-run them to find out."""
+    if t.status not in ("todo", "in_progress", "blocked"):
+        return []
+    last = office.store.events(task_id=t.id, limit=1, kinds=("checks_run",))
+    if not last or last[-1]["data"].get("passed"):
+        return []
+    out = ["", "The last submission's checks failed:"]
+    for r in last[-1]["data"].get("results", []):
+        if r.get("exit") != 0:
+            out.append(f"$ {r.get('command')}  (exit {r.get('exit')})")
+            if r.get("output"):
+                out.append(r["output"])
+    return out
+
+
+SKIP_TREE = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".tox",
+    ".idea",
+    ".vscode",
+}
+
+
+def workspace_tree(root, limit: int = 80) -> list[str]:
+    """A compact, bounded listing of the workspace (directories first, hidden noise skipped)."""
+    import os
+
+    lines: list[str] = []
+    more = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_TREE)
+        rel = os.path.relpath(dirpath, root)
+        prefix = "" if rel == "." else rel + "/"
+        for f in sorted(filenames):
+            if len(lines) < limit:
+                lines.append(prefix + f)
+            else:
+                more += 1
+        if more > 5000:  # don't walk huge trees on every wake
+            lines.append("… and many more files (use list_files)")
+            return lines
+    if more:
+        lines.append(f"… and {more} more files (use list_files)")
+    return lines
+
+
 def describe_task(office: Office, t: Task) -> str:
     lines = [f"## {t.ref}: {t.title}", f"Status: {t.status} · assignee: {t.assignee} · created by: {t.creator}"]
     if t.reviewer:
@@ -142,12 +227,8 @@ def describe_task(office: Office, t: Task) -> str:
     lines += [f"- `{c}`" for c in t.checks] if t.checks else ["- (none; the reviewer decides)"]
     if t.summary:
         lines += ["", f"Latest submission summary: {t.summary}"]
-    kids = office.store.children(t.id)
-    if kids:
-        lines += ["", "Subtasks:"] + [
-            f"- {_status_line(k)}" + (f"\n  summary: {k.summary}" if k.summary and k.status == "done" else "")
-            for k in kids
-        ]
+    lines += _last_failure(office, t)
+    lines += _subtasks(office, t)
     act = _activity(office, t)
     if act:
         lines += ["", "Recent activity:"] + act
@@ -177,14 +258,15 @@ def briefing(office: Office, agent: AgentSpec, wake: Wake) -> str:
     parts += [f"- {_reason(r)}" for r in wake.reasons]
     parts += ["", describe_task(office, t)]
 
-    other = [
-        x
-        for x in office.store.tasks(("todo", "in_progress", "blocked", "in_review"))
-        if x.assignee == agent.name and x.id != t.id
-    ]
+    if t.assignee == agent.name or t.reviewer == agent.name:
+        files = workspace_tree(office.company.workspace)
+        parts += ["", "Workspace files:" if files else "Workspace files: (empty)"]
+        parts += [f"- {f}" for f in files]
+
+    other = office.store.open_tasks_for(agent.name, exclude=t.id, limit=10)
     if other:
         parts += ["", "Your other open tasks (you'll be woken for these separately):"]
-        parts += [f"- {_status_line(x)}" for x in other[:10]]
+        parts += [f"- {_status_line(x)}" for x in other]
 
     notes = office.store.notes(agent.name)
     if notes:

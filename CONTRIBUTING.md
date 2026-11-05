@@ -5,7 +5,7 @@ Thanks for helping. tinyco aims to stay small: one package, standard library plu
 ## Setup
 
 ```
-git clone https://github.com/ThePeeps191/claudes-project && cd claudes-project
+git clone https://github.com/ThePeeps191/tinyco && cd tinyco
 pip install -e ".[dev]"
 pytest -q
 ruff check . && ruff format --check .

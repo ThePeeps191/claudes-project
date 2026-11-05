@@ -211,3 +211,36 @@ def test_git_can_be_disabled(make_office):
     (office.company.workspace / "x.txt").write_text("x")
     office.submit("ceo", 1, "done")
     assert not office.store.events(kinds=("committed",))
+
+
+def test_briefing_shows_workspace_and_last_failure(office):
+    from tinyco.briefing import briefing
+    from tinyco.store import Wake
+
+    office.start_goal("Goal")
+    office.create_task("ceo", 1, "Part", "engineer", "", ["echo boom; exit 3"])
+    ws = office.company.workspace
+    (ws / "src").mkdir()
+    (ws / "src" / "app.py").write_text("x = 1\n")
+    (ws / "node_modules").mkdir()
+    (ws / "node_modules" / "junk.js").write_text("")
+    office.submit("engineer", 2, "try")
+    brief = briefing(office, office.company.agents["engineer"], Wake(0, "engineer", 2, [{"reason": "nudge"}], "", 0))
+    assert "- src/app.py" in brief and "junk.js" not in brief
+    assert "The last submission's checks failed:" in brief and "boom" in brief and "(exit 3)" in brief
+
+
+def test_manager_brief_is_bounded(office):
+    from tinyco.briefing import briefing
+    from tinyco.store import Wake
+
+    office.start_goal("Big goal")
+    for i in range(60):
+        office.create_task("ceo", 1, f"Part {i}", "engineer", "", ["true"])
+    for i in range(2, 42):
+        office.submit("engineer", i, f"did part {i}")
+    brief = briefing(office, office.company.agents["ceo"], Wake(0, "ceo", 1, [{"reason": "subtask_done"}], "", 0))
+    assert "Subtasks (60: 40 done, 20 todo):" in brief
+    assert "… and 5 more open" in brief and "… and 32 earlier closed subtasks" in brief
+    assert brief.count("\n- T") < 30  # bounded, not 60 lines
+    assert "did part 41" in brief  # the most recent completions keep their summaries

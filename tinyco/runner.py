@@ -325,7 +325,7 @@ class Runner:
 
         t = self.office.get(task_id)
         role = self._role(name, t)
-        if role == "assignee" and any(c.is_open for c in self.store.children(t.id)):
+        if role == "assignee" and self.store.has_open_children(t.id):
             role = None  # waiting on its own subtasks is fine
         if role is None or self.store.has_pending_wake(name, t.id):
             return
