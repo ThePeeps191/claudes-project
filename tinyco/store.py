@@ -81,7 +81,12 @@ MIGRATIONS = (
     ("tasks", "title_key", "TEXT NOT NULL DEFAULT ''"),
     ("tasks", "criteria", "TEXT NOT NULL DEFAULT '[]'"),
 )
-POST_MIGRATION = "CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(parent_id, title_key);"
+POST_MIGRATION = """
+CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(parent_id, title_key);
+DROP INDEX IF EXISTS idx_tasks_parent;
+DROP INDEX IF EXISTS idx_wakes_status;
+DROP INDEX IF EXISTS idx_events_task;
+"""
 
 OPEN = ("todo", "in_progress", "in_review", "blocked")
 CLOSED = ("done", "failed", "cancelled")
@@ -195,7 +200,7 @@ class Store:
             except BaseException:
                 self.db.execute("ROLLBACK")
                 raise
-        self.db.execute(POST_MIGRATION)
+        self.db.executescript(POST_MIGRATION)
 
     def _columns(self, table: str) -> set[str]:
         return {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}

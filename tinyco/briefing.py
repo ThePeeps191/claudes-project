@@ -38,7 +38,7 @@ REASON_TEXT = {
     "subtask_done": "Subtask T{subtask} is done.",
     "subtask_failed": "Subtask T{subtask} failed ({why}) and was escalated to you. Decide what to do: reassign it, rewrite it, cancel it, or do it yourself.",
     "subtask_cancelled": "Subtask T{subtask} was cancelled.",
-    "review_requested": "{by} submitted this task and its checks passed. You're the reviewer: inspect the work and call `review`.",
+    "review_requested": "{by} submitted this task for your review. Inspect the work itself (open the files), then call `review`; if it has acceptance criteria, give a verdict with evidence on every numbered criterion.",
     "changes_requested": "{by} reviewed this and requested changes.",
     "human_replied": "The human replied to your question.",
     "comment": "{by} commented and asked you to read it.",
@@ -117,7 +117,11 @@ def _activity(office: Office, t: Task, limit: int = 12) -> list[str]:
         if k == "comment":
             line = f"{who}: {d.get('text', '')}"
         elif k == "checks_run":
-            line = f"{who} submitted; checks {'passed' if d.get('passed') else 'FAILED'}"
+            line = (
+                f"{who} submitted; checks {'passed' if d.get('passed') else 'FAILED'}"
+                if d.get("results")
+                else f"{who} submitted"
+            )
         elif k == "reviewed":
             line = f"{who} {'approved' if d.get('approved') else 'requested changes'}" + (
                 f": {d['notes']}" if d.get("notes") else ""

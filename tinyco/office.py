@@ -50,12 +50,21 @@ def tail(text: str, limit: int = OUTPUT_TAIL) -> str:
     return f"[... {len(text) - limit} earlier characters omitted ...]\n" + text[-limit:]
 
 
-def child_env() -> dict[str, str]:
-    """Environment for commands agents run: inherit, minus the company's own API credentials."""
+def child_env(company: Company | None = None) -> dict[str, str]:
+    """Environment for commands agents run: inherit, minus the company's credentials.
+
+    That's the Claude API key and every token an agent's MCP servers read from the environment.
+    """
     env = dict(os.environ)
-    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", *secret_env_names(company)):
         env.pop(k, None)
     return env
+
+
+def secret_env_names(company: Company | None) -> set[str]:
+    if company is None:
+        return set()
+    return {m["token_env"] for a in company.agents.values() for m in a.mcp if m.get("token_env")}
 
 
 class Office:
@@ -241,6 +250,8 @@ class Office:
         if not fields:
             raise OfficeError("nothing to change")
         new_checks = fields.get("checks", t.checks)
+        if fields.get("criteria") and "reviewer" not in fields and not t.reviewer and by not in (HUMAN, new_assignee):
+            fields["reviewer"] = by  # as in create_task: whoever sets criteria judges them by default
         new_reviewer = fields["reviewer"] if "reviewer" in fields else t.reviewer
         if fields.get("criteria", t.criteria) and not new_reviewer:
             raise OfficeError("acceptance criteria need a reviewer to judge them")
@@ -253,7 +264,9 @@ class Office:
             fields.update(status="todo", attempts=0, blocked_on=None)
         self.store.update_task(t.id, **fields)
         self.store.event("task_updated", by, t.id, **{k: v for k, v in fields.items() if k != "status"})
-        if reopen or t.is_open:
+        if t.status == "in_review" and not reopen and "reviewer" in fields and new_reviewer not in (None, HUMAN):
+            self.store.wake(new_reviewer, t.id, "review_requested", by=t.assignee)  # the new reviewer takes over
+        elif reopen or t.is_open:
             self.store.wake(new_assignee, t.id, "updated", by=by, changes=sorted(fields))
         return f"Updated {t.ref}" + (f" and handed it to {new_assignee}." if reopen else ".")
 
@@ -282,7 +295,7 @@ class Office:
                     capture_output=True,
                     text=True,
                     timeout=self.company.check_timeout,
-                    env=child_env(),
+                    env=child_env(self.company),
                     stdin=subprocess.DEVNULL,
                 )
                 results.append(CheckResult(cmd, p.returncode, tail((p.stdout or "") + (p.stderr or ""))))
@@ -354,6 +367,8 @@ class Office:
             raise OfficeError(f"you are not the reviewer of {t.ref}")
         if t.status != "in_review":
             raise OfficeError(f"{t.ref} is {t.status}, not waiting for review")
+        if verdicts and not t.criteria:
+            raise OfficeError(f"{t.ref} has no acceptance criteria; leave out verdicts and explain in notes")
         if t.criteria and (by != HUMAN or verdicts):
             verdicts = self._check_verdicts(t, verdicts or [], approve)
             failing = [v for v in verdicts if not v["passed"]]
@@ -382,13 +397,15 @@ class Office:
         seen: dict[int, dict] = {}
         for v in verdicts:
             try:
-                i = int(v["criterion"])
+                i = int(str(v["criterion"]).strip().lstrip("Tt#"))
             except (KeyError, TypeError, ValueError):
                 raise OfficeError("each verdict needs a criterion number, passed and a reason") from None
             if not 1 <= i <= n:
                 raise OfficeError(f"{t.ref} has criteria 1-{n}; there is no criterion {i}")
             if not str(v.get("reason", "")).strip():
                 raise OfficeError(f"give a reason for your verdict on criterion {i}")
+            if i in seen:
+                raise OfficeError(f"criterion {i} was judged twice; give exactly one verdict per criterion")
             seen[i] = {"criterion": i, "passed": bool(v.get("passed")), "reason": str(v["reason"]).strip()}
         missing = [i for i in range(1, n + 1) if i not in seen]
         if missing:
