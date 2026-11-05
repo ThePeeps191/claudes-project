@@ -67,10 +67,10 @@ CREATE TABLE IF NOT EXISTS notes (
     agent TEXT NOT NULL,
     text  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_status ON tasks(parent_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee, status);
-CREATE INDEX IF NOT EXISTS idx_wakes_status ON wakes(status, agent, task_id);
-CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, kind);
+CREATE INDEX IF NOT EXISTS idx_wakes_pending ON wakes(status, agent, task_id);
+CREATE INDEX IF NOT EXISTS idx_events_task_kind ON events(task_id, kind);
 CREATE INDEX IF NOT EXISTS idx_spend_task ON spend(task_id);
 CREATE INDEX IF NOT EXISTS idx_spend_agent ON spend(agent);
 CREATE INDEX IF NOT EXISTS idx_notes_agent ON notes(agent);
@@ -149,26 +149,52 @@ class Store:
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         if str(path) != ":memory:":
-            self.db.execute("PRAGMA journal_mode=WAL")
+            # Set the busy timeout first: other processes (dashboard, MCP servers, a second opener mid-migration)
+            # share the file, and every statement below should wait for a lock rather than fail.
+            self.db.execute("PRAGMA busy_timeout=10000")
+            self._enable_wal()
             # WAL + NORMAL never corrupts the database; at worst the last write before a power cut is lost.
             self.db.execute("PRAGMA synchronous=NORMAL")
-            self.db.execute("PRAGMA busy_timeout=10000")  # other processes (dashboard, MCP servers) share the file
         self.db.executescript(SCHEMA)
         self._migrate()
         self.listeners: list = []
         self.lock = threading.RLock()
 
+    def _enable_wal(self) -> None:
+        """Switch to WAL. Changing journal mode can report busy without waiting, so retry briefly."""
+        for attempt in range(50):
+            try:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) and "busy" not in str(e):
+                    raise
+                time.sleep(0.02 * (attempt + 1))
+        self.db.execute("PRAGMA journal_mode=WAL")
+
     def _migrate(self) -> None:
+        """Bring an older database up to date, atomically, even with several processes opening it at once."""
         for table, column, decl in MIGRATIONS:
-            cols = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
-            if column not in cols:
-                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-                if column == "title_key":
-                    for r in self.db.execute("SELECT id, title FROM tasks").fetchall():
-                        self.db.execute(
-                            "UPDATE tasks SET title_key = ? WHERE id = ?", (normalize_title(r["title"]), r["id"])
+            if column in self._columns(table):
+                continue
+            self.db.execute("BEGIN IMMEDIATE")  # serializes concurrent openers
+            try:
+                if column not in self._columns(table):  # re-check under the lock
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                    if column == "title_key":
+                        rows = self.db.execute("SELECT id, title FROM tasks").fetchall()
+                        self.db.executemany(
+                            "UPDATE tasks SET title_key = ? WHERE id = ?",
+                            [(normalize_title(r["title"]), r["id"]) for r in rows],
                         )
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
         self.db.execute(POST_MIGRATION)
+
+    def _columns(self, table: str) -> set[str]:
+        return {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
 
     # -- events ---------------------------------------------------------------
 
@@ -434,10 +460,11 @@ class Store:
         sql = "SELECT COALESCE(SUM(usd), 0) FROM spend" + (" WHERE " + " AND ".join(where) if where else "")
         return float(self.db.execute(sql, args).fetchone()[0])
 
-    def spend_by_agent(self) -> dict[str, dict]:
+    def spend_by_agent(self, since: float | None = None) -> dict[str, dict]:
         rows = self.db.execute(
             "SELECT agent, SUM(usd) usd, SUM(input) input, SUM(output) output, SUM(cache_read) cache_read,"
-            " COUNT(*) calls FROM spend GROUP BY agent"
+            " COUNT(*) calls FROM spend WHERE ts >= ? GROUP BY agent",
+            (since if since is not None else 0,),
         ).fetchall()
         return {r["agent"]: dict(r) for r in rows}
 

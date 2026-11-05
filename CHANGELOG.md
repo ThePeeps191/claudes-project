@@ -9,6 +9,7 @@
 - `budget_period` (day/week/month) so budgets reset for long-running companies.
 - Shared company notes (`note(..., shared=true)`) in every agent's briefing; notes capped at 600 characters.
 - `tinyco reopen ID ["guidance"]` and `tinyco goal -f spec.md`.
+- Fixes from a second independent review: routines keep their schedule after late fires (no weekday drift or double fires), routine reviewers/checks validated at load, reopen resets stall counting and needs an in-progress parent, atomic and concurrency-safe database migration with fresh index names, period-aware spend in briefs/status/cost/dashboard, watch honours stop mid-burst and wakes at budget-period boundaries and for API-error retries.
 - Repository renamed to `tinyco`.
 
 ## 0.1.0 (unreleased)

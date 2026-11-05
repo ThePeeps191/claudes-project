@@ -25,7 +25,8 @@ from .store import Store
 
 def snapshot(office: Office) -> dict:
     company, store = office.company, office.store
-    spend = store.spend_by_agent()
+    since = company.period_start()
+    spend = store.spend_by_agent(since=since)
     running = {
         w["agent"]: w["task_id"]
         for w in store.db.execute("SELECT agent, task_id FROM wakes WHERE status = 'running'").fetchall()
@@ -87,7 +88,8 @@ def snapshot(office: Office) -> dict:
             "name": company.name,
             "mission": company.mission,
             "budget": company.budget_usd,
-            "spent": round(store.spent(), 4),
+            "spent": round(store.spent(since=since), 4),
+            "period": company.budget_period,
             "shell": company.shell,
             "max_attempts": company.max_attempts,
         },

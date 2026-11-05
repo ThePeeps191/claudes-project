@@ -50,6 +50,21 @@ class Routine:
             slot += timedelta(seconds=self.every)
         return slot.timestamp()
 
+    def _step(self, t: float) -> float:
+        """One interval later; anchored routines step in wall-clock time so DST doesn't shift them."""
+        if self.at is None:
+            return t + self.every
+        return (datetime.fromtimestamp(t) + timedelta(seconds=self.every)).timestamp()
+
+    def current_slot(self, last_run: float | None, now: float) -> float | None:
+        """The latest slot that is due at ``now`` (missed slots collapse into one), or None if none is."""
+        slot = self.next_due(last_run, now)
+        if slot > now:
+            return None
+        while (nxt := self._step(slot)) <= now:
+            slot = nxt
+        return slot
+
 
 def parse_every(value: str) -> int:
     m = re.fullmatch(r"\s*(\d+)\s*([mhdw])\s*", str(value))
@@ -85,12 +100,22 @@ def parse_routines(raw: list) -> list[Routine]:
                 every=every,
                 goal=goal,
                 description=str(r.get("description") or ""),
-                checks=[str(c) for c in r.get("checks") or []],
-                review=r.get("review"),
+                checks=_checks(name, r.get("checks")),
+                review=(str(r["review"]).strip() or None) if r.get("review") is not None else None,
                 at=at,
             )
         )
     return routines
+
+
+def _checks(name: str, value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list) and all(isinstance(c, str) for c in value):
+        return [c for c in value if c.strip()]
+    raise ConfigError(f"routine {name!r}: checks must be a list of shell commands")
 
 
 class Scheduler:
@@ -119,11 +144,22 @@ class Scheduler:
         return min(times) if times else None
 
     def fire_due(self, now: float | None = None) -> list[int]:
-        """Create goals for routines that are due. Returns the new task ids."""
+        """Create goals for routines that are due. Returns the new task ids.
+
+        The slot that was due is recorded (not the time it fired), so a late or
+        delayed fire never shifts the schedule, and missed slots collapse into one.
+        The slot is recorded before the goal is created: if the process dies in
+        between, that run is skipped rather than duplicated.
+        """
+        from .office import OfficeError
+
         now = time.time() if now is None else now
         fired = []
-        for r in self.due(now):
-            _, last_task = self._state(r.name)
+        for r in self.routines:
+            last_run, last_task = self._state(r.name)
+            slot = r.current_slot(last_run, now)
+            if slot is None:
+                continue
             prev = self.office.store.task(last_task) if last_task else None
             if prev is not None and prev.is_open:
                 self.office.store.event(
@@ -133,11 +169,16 @@ class Scheduler:
                     routine=r.name,
                     why=f"{prev.ref} from the last run is still {prev.status}",
                 )
-                self._record(r.name, now, last_task)  # try again next slot
+                self._record(r.name, slot, last_task)  # try again next slot
                 continue
-            t = self.office.start_goal(r.goal, r.description, r.checks, r.review)
+            self._record(r.name, slot, None)
+            try:
+                t = self.office.start_goal(r.goal, r.description, r.checks, r.review)
+            except OfficeError as e:
+                self.office.store.event("routine_error", None, None, routine=r.name, error=str(e))
+                continue
             self.office.store.event("routine_fired", None, t.id, routine=r.name)
-            self._record(r.name, now, t.id)
+            self._record(r.name, slot, t.id)
             fired.append(t.id)
         return fired
 
