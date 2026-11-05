@@ -12,6 +12,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from . import gitlog
 from .config import Company
 from .store import CLOSED, Store, Task
 
@@ -348,6 +349,11 @@ class Office:
     def _close(self, task_id: int, status: str, by: str) -> None:
         t = self.store.update_task(task_id, status=status, blocked_on=None)
         self.store.event(f"task_{status}", by, t.id, title=t.title)
+        if status == "done" and self.company.git:
+            message = f"{t.ref} {t.title}" + (f"\n\n{t.summary}" if t.summary else "")
+            sha = gitlog.commit(self.company.workspace, t.assignee, message)
+            if sha:
+                self.store.event("committed", t.assignee, t.id, sha=sha)
         if t.parent_id is not None:
             owner = self.get(t.parent_id).assignee
             self.store.wake(owner, t.parent_id, f"subtask_{status}", subtask=t.id, by=by, summary=t.summary or "")

@@ -22,11 +22,18 @@ def open_company(args) -> tuple[Company, Store, Office]:
 
 
 def make_approver(style: Style):
+    import threading
+
     always: set[str] = set()
+    lock = threading.Lock()  # agents running in parallel take turns asking
 
     def approve(kind: str, detail: str) -> bool:
         if not sys.stdin.isatty():
             return False
+        with lock:
+            return _ask(kind, detail)
+
+    def _ask(kind: str, detail: str) -> bool:
         if "all" in always:
             return True
         label = "check" if kind == "check" else "command"
@@ -60,12 +67,17 @@ def cmd_init(args) -> int:
     template = TEMPLATES[args.template]
     path.write_text(template.replace("{name}", args.name or root.name.replace("-", " ").title()), encoding="utf-8")
     (root / "workspace").mkdir(exist_ok=True)
+    from . import gitlog
+
+    git_ready = gitlog.init(root / "workspace")
     gi = root / ".gitignore"
     if not gi.exists():
         gi.write_text(".tinyco/\n", encoding="utf-8")
     print(
         f"Created {path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path} ({args.template} template)."
     )
+    if git_ready:
+        print("Initialized a git repo in workspace/: finished tasks are committed with the agent as author.")
     print("Next:")
     print('  tinyco goal "Build a CLI that converts CSV files to JSON" --check "python -m pytest -q"')
     print("  tinyco run")
@@ -103,7 +115,7 @@ def cmd_run(args) -> int:
         return 0
     started = time.time()
     try:
-        summary = Runner(office, ClaudeModel()).run(max_wakes=args.max_wakes)
+        summary = Runner(office, ClaudeModel()).run(max_wakes=args.max_wakes, parallel=args.jobs or company.parallel)
     except KeyboardInterrupt:
         print(style.yellow("\ninterrupted; pending work is saved. Resume with: tinyco run"))
         return 130
@@ -316,6 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("run", help="work through pending wake-ups until the company is idle")
     s.add_argument("--yes", "-y", action="store_true", help="allow shell commands without asking (use in a sandbox)")
     s.add_argument("--max-wakes", type=int, help="stop after this many wake-ups")
+    s.add_argument("--jobs", "-j", type=int, help="how many agents may work at once (default: company.parallel or 1)")
     s.add_argument("--budget", type=float, help="override the company budget (USD) for this run")
     s.add_argument("--verbose", "-v", action="store_true", help="show thinking summaries and every tool call")
     s.add_argument("--quiet", "-q", action="store_true", help="don't stream events")

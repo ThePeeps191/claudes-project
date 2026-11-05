@@ -40,6 +40,8 @@ class Company:
     shell: str = "ask"
     check_timeout: int = 300
     max_attempts: int = 3
+    git: bool = True
+    parallel: int = 1
     extra: dict = field(default_factory=dict)
 
     @property
@@ -162,9 +164,22 @@ def parse(data: dict, root: Path) -> Company:
         shell=shell,
         check_timeout=int(c.get("check_timeout", 300)),
         max_attempts=int(c.get("max_attempts", 3)),
+        git=bool(c.get("git", True)),
+        parallel=max(1, int(c.get("parallel", 1))),
         extra={
             k: v
             for k, v in c.items()
-            if k not in {"name", "mission", "budget_usd", "workspace", "shell", "check_timeout", "max_attempts"}
+            if k
+            not in {
+                "name",
+                "mission",
+                "budget_usd",
+                "workspace",
+                "shell",
+                "check_timeout",
+                "max_attempts",
+                "git",
+                "parallel",
+            }
         },
     )

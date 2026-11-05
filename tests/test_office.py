@@ -173,3 +173,41 @@ def test_notes_persist_into_briefings(office):
     brief = briefing(office, office.company.agents["ceo"], Wake(0, "ceo", 1, [{"reason": "assigned"}], "running", 0))
     assert "We use pytest." in brief
     assert "top-level goal" in brief
+
+
+def test_done_tasks_are_committed_as_the_agent(office):
+    import subprocess
+
+    from tinyco import gitlog
+
+    if not gitlog.available():
+        import pytest
+
+        pytest.skip("git not installed")
+    ws = office.company.workspace
+    assert gitlog.init(ws)
+    office.start_goal("Goal")
+    office.create_task("ceo", 1, "Write file", "engineer", "", ["test -f out.txt"], reviewer="reviewer")
+    (ws / "out.txt").write_text("hi\n")
+    office.submit("engineer", 2, "wrote out.txt")
+    office.review("reviewer", 2, True)
+    log = subprocess.run(["git", "log", "--format=%an|%s"], cwd=ws, capture_output=True, text=True).stdout
+    assert log.splitlines() == ["engineer (tinyco)|T2 Write file"]  # authored by the assignee, not the reviewer
+    assert office.store.events(kinds=("committed",))[0]["data"]["sha"]
+    # Nothing changed: no empty commit.
+    office.submit("ceo", 1, "done")
+    log = subprocess.run(["git", "log", "--format=%an|%s"], cwd=ws, capture_output=True, text=True).stdout
+    assert len(log.splitlines()) == 1
+
+
+def test_git_can_be_disabled(make_office):
+    from conftest import STARTUP
+
+    from tinyco import gitlog
+
+    office = make_office({**STARTUP, "company": {**STARTUP["company"], "git": False}})
+    gitlog.init(office.company.workspace)
+    office.start_goal("Goal", checks=["true"])
+    (office.company.workspace / "x.txt").write_text("x")
+    office.submit("ceo", 1, "done")
+    assert not office.store.events(kinds=("committed",))
