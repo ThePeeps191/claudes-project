@@ -313,6 +313,18 @@ def cmd_demo(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    from .export import render
+
+    company, store, office = open_company(args)
+    out = Path(args.output or f"tinyco-{company.name.lower().replace(' ', '-')}.html")
+    out.write_text(render(office), encoding="utf-8")
+    style = Style(use_color())
+    print(f"Wrote {out} ({out.stat().st_size // 1024} KB): open it in a browser, or host it anywhere static.")
+    print(style.dim("It includes task descriptions, commands and agent messages; review it before sharing."))
+    return 0
+
+
 def cmd_mcp_serve(args) -> int:
     from .mcp import Server, serve_stdio
 
@@ -417,6 +429,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fast", action="store_true", help="no pauses")
     s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
     s.set_defaults(fn=cmd_demo)
+
+    s = sub.add_parser("export", help="write a self-contained HTML snapshot of the company's run")
+    s.add_argument("-o", "--output", help="output file (default: tinyco-<company>.html)")
+    s.set_defaults(fn=cmd_export)
 
     # Internal: the org-tools MCP server that external agent runtimes connect to.
     s = sub.add_parser("mcp-serve")
