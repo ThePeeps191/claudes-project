@@ -67,10 +67,10 @@ CREATE TABLE IF NOT EXISTS notes (
     agent TEXT NOT NULL,
     text  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_status ON tasks(parent_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee, status);
-CREATE INDEX IF NOT EXISTS idx_wakes_status ON wakes(status, agent, task_id);
-CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, kind);
+CREATE INDEX IF NOT EXISTS idx_wakes_pending ON wakes(status, agent, task_id);
+CREATE INDEX IF NOT EXISTS idx_events_task_kind ON events(task_id, kind);
 CREATE INDEX IF NOT EXISTS idx_spend_task ON spend(task_id);
 CREATE INDEX IF NOT EXISTS idx_spend_agent ON spend(agent);
 CREATE INDEX IF NOT EXISTS idx_notes_agent ON notes(agent);
@@ -159,16 +159,28 @@ class Store:
         self.lock = threading.RLock()
 
     def _migrate(self) -> None:
+        """Bring an older database up to date, atomically, even with several processes opening it at once."""
         for table, column, decl in MIGRATIONS:
-            cols = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
-            if column not in cols:
-                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-                if column == "title_key":
-                    for r in self.db.execute("SELECT id, title FROM tasks").fetchall():
-                        self.db.execute(
-                            "UPDATE tasks SET title_key = ? WHERE id = ?", (normalize_title(r["title"]), r["id"])
+            if column in self._columns(table):
+                continue
+            self.db.execute("BEGIN IMMEDIATE")  # serializes concurrent openers
+            try:
+                if column not in self._columns(table):  # re-check under the lock
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                    if column == "title_key":
+                        rows = self.db.execute("SELECT id, title FROM tasks").fetchall()
+                        self.db.executemany(
+                            "UPDATE tasks SET title_key = ? WHERE id = ?",
+                            [(normalize_title(r["title"]), r["id"]) for r in rows],
                         )
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
         self.db.execute(POST_MIGRATION)
+
+    def _columns(self, table: str) -> set[str]:
+        return {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
 
     # -- events ---------------------------------------------------------------
 
@@ -434,10 +446,11 @@ class Store:
         sql = "SELECT COALESCE(SUM(usd), 0) FROM spend" + (" WHERE " + " AND ".join(where) if where else "")
         return float(self.db.execute(sql, args).fetchone()[0])
 
-    def spend_by_agent(self) -> dict[str, dict]:
+    def spend_by_agent(self, since: float | None = None) -> dict[str, dict]:
         rows = self.db.execute(
             "SELECT agent, SUM(usd) usd, SUM(input) input, SUM(output) output, SUM(cache_read) cache_read,"
-            " COUNT(*) calls FROM spend GROUP BY agent"
+            " COUNT(*) calls FROM spend WHERE ts >= ? GROUP BY agent",
+            (since if since is not None else 0,),
         ).fetchall()
         return {r["agent"]: dict(r) for r in rows}
 

@@ -276,9 +276,13 @@ def briefing(office: Office, agent: AgentSpec, wake: Wake) -> str:
     if notes:
         parts += ["", "Your notes:"] + [f"- {n}" for n in notes]
 
-    spent = office.store.spent(agent=agent.name)
+    company = office.company
+    spent = office.store.spent(agent=agent.name, since=company.period_start())
     budget = agent.budget_usd
-    parts += ["", f"Your spend so far: ${spent:.2f}" + (f" of ${budget:.2f}" if budget else "") + "."]
+    parts += [
+        "",
+        f"Your spend{company.period_label or ' so far'}: ${spent:.2f}" + (f" of ${budget:.2f}" if budget else "") + ".",
+    ]
     role = "assignee" if t.assignee == agent.name else ("reviewer" if t.reviewer == agent.name else "participant")
     if role == "assignee" and t.creator == HUMAN and t.parent_id is None:
         parts.append("This is a top-level goal from the human owner.")

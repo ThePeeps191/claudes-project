@@ -50,6 +50,27 @@ class Company:
     routines: list = field(default_factory=list)
     extra: dict = field(default_factory=dict)
 
+    @property
+    def period_label(self) -> str:
+        """'' for lifetime budgets, else e.g. ' this month'."""
+        return "" if self.budget_period == "total" else f" this {self.budget_period}"
+
+    def next_period_start(self, now: float | None = None) -> float | None:
+        """When the current budget period ends (None for lifetime budgets)."""
+        from datetime import datetime, timedelta
+
+        start = self.period_start(now)
+        if start is None:
+            return None
+        d = datetime.fromtimestamp(start)
+        if self.budget_period == "day":
+            d += timedelta(days=1)
+        elif self.budget_period == "week":
+            d += timedelta(days=7)
+        else:
+            d = d.replace(year=d.year + 1, month=1) if d.month == 12 else d.replace(month=d.month + 1)
+        return d.timestamp()
+
     def period_start(self, now: float | None = None) -> float | None:
         """Start of the current budget period (None: budgets are lifetime totals)."""
         import time
@@ -188,6 +209,12 @@ def parse(data: dict, root: Path) -> Company:
     from .routines import parse_routines
 
     routines = parse_routines(data.get("routines") or [])
+    top = roots[0]
+    for r in routines:
+        if r.review is not None and r.review != "human" and r.review not in agents:
+            raise ConfigError(f"routine {r.name!r}: review = {r.review!r} is not 'human' or a defined agent")
+        if r.review == top:
+            raise ConfigError(f"routine {r.name!r}: the reviewer can't be {top}, who does the work")
 
     ws = (root / c.get("workspace", "workspace")).resolve()
     if ws == root.resolve() or ws in root.resolve().parents:

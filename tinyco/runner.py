@@ -23,6 +23,7 @@ from .store import Wake
 from .tools import Toolbox, tools_for
 
 MAX_NUDGES = 2
+MODEL_ERROR_RETRY = 300  # seconds before watch mode retries work paused by an API error
 
 
 @dataclass
@@ -128,7 +129,7 @@ class Runner:
             self.store.event("watch_started", None, None, routines=[r.name for r in self.company.routines])
             while not stop.is_set():
                 sched.fire_due()
-                s = self._run(None, parallel)
+                s = self._run(None, parallel, stop)
                 total.wakes += s.wakes
                 total.turns += s.turns
                 total.usd += s.usd
@@ -137,11 +138,15 @@ class Runner:
                 if s.stopped == "fatal" or (s.stopped == "budget" and self.company.budget_period == "total"):
                     total.stopped, total.error = s.stopped, s.error
                     break
-                # Sleep until new work, the next routine, or an hourly re-check (budget periods roll over).
-                deadline = time.time() + 3600
-                nxt = sched.next_wakeup()
-                if nxt is not None:
-                    deadline = min(deadline, nxt)
+                # Sleep until new work, the next routine, a new budget period, a retry of work paused by
+                # an API error, or an hourly re-check, whichever comes first.
+                now = time.time()
+                deadline = now + 3600
+                for t in (sched.next_wakeup(), self.company.next_period_start(now)):
+                    if t is not None:
+                        deadline = min(deadline, t)
+                if any((t.blocked_on or "").startswith("model error:") for t in self.store.tasks(("blocked",))):
+                    deadline = min(deadline, now + MODEL_ERROR_RETRY)
                 while not stop.is_set() and time.time() < deadline:
                     if self.store.pending_wakes() and s.stopped != "budget":
                         break
@@ -149,7 +154,7 @@ class Runner:
             total.stopped = total.stopped if total.stopped != "idle" else "stopped"
         return total
 
-    def _run(self, max_wakes: int | None, parallel: int) -> RunSummary:
+    def _run(self, max_wakes: int | None, parallel: int, stop: threading.Event | None = None) -> RunSummary:
         summary = RunSummary()
         start_spend = self.store.spent()
         recovered = self.store.requeue_running()
@@ -164,7 +169,7 @@ class Runner:
         pool = ThreadPoolExecutor(max_workers=parallel, thread_name_prefix="tinyco") if parallel > 1 else None
         try:
             while True:
-                while summary.stopped == "idle" and len(inflight) < parallel:
+                while summary.stopped == "idle" and len(inflight) < parallel and not (stop and stop.is_set()):
                     if max_wakes is not None and summary.wakes >= max_wakes:
                         summary.stopped = "max_wakes"
                         break
@@ -360,7 +365,15 @@ class Runner:
         """Nudges ``name`` got on this task since the last sign of real progress."""
         n = 0
         for e in reversed(self.store.events(task_id=task_id, limit=300)):
-            if e["kind"] in ("human_replied", "task_updated", "checks_run", "reviewed", "resumed", "task_created"):
+            if e["kind"] in (
+                "human_replied",
+                "task_updated",
+                "checks_run",
+                "reviewed",
+                "resumed",
+                "task_created",
+                "reopened",
+            ):
                 break
             if e["kind"] == "nudged" and e["agent"] == name:
                 n += 1

@@ -90,7 +90,7 @@ def cmd_goal(args) -> int:
     if args.file:
         try:
             description = (description + "\n\n" if description else "") + Path(args.file).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             print(f"tinyco: can't read {args.file}: {e}", file=sys.stderr)
             return 1
     try:
@@ -131,6 +131,9 @@ def cmd_run(args) -> int:
     runner = Runner(office, ClaudeModel())
     parallel = args.jobs or company.parallel
     if args.watch:
+        if args.max_wakes is not None:
+            print("tinyco: --max-wakes can't be combined with --watch", file=sys.stderr)
+            return 1
         return _watch(runner, company, style, parallel, args.poll)
     try:
         summary = runner.run(max_wakes=args.max_wakes, parallel=parallel)
@@ -219,14 +222,18 @@ def cmd_status(args) -> int:
     print()
     print(board(office, style))
     print()
-    spend = store.spend_by_agent()
-    total = store.spent()
+    since = company.period_start()
+    spend = store.spend_by_agent(since=since)
+    total = store.spent(since=since)
     parts = []
     for name, a in company.agents.items():
         used = spend.get(name, {}).get("usd", 0.0) or 0.0
         cap = f"/${a.budget_usd:.2f}" if a.budget_usd is not None else ""
         parts.append(f"{style.agent(name)} ${used:.2f}{cap}")
-    print("spend: " + " · ".join(parts) + f"  {style.dim(f'(total ${total:.2f} of ${company.budget_usd:.2f})')}")
+    period = company.period_label
+    print(
+        f"spend{period}: " + " · ".join(parts) + f"  {style.dim(f'(total ${total:.2f} of ${company.budget_usd:.2f})')}"
+    )
     pending = store.pending_wakes()
     if pending:
         who = ", ".join(sorted({w.agent for w in pending}))
@@ -383,7 +390,16 @@ def cmd_cost(args) -> int:
     company, store, office = open_company(args)
     style = Style(use_color())
     total = store.spent()
-    print(style.bold(f"{company.name}: ${total:.2f} of ${company.budget_usd:.2f} budget"))
+    current = store.spent(since=company.period_start())
+    if company.budget_period == "total":
+        print(style.bold(f"{company.name}: ${total:.2f} of ${company.budget_usd:.2f} budget"))
+    else:
+        print(
+            style.bold(
+                f"{company.name}: ${current:.2f} of ${company.budget_usd:.2f}{company.period_label} "
+                f"(${total:.2f} all time; the tables below are all-time)"
+            )
+        )
     if not total:
         print(style.dim("No model spend yet."))
         return 0

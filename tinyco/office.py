@@ -99,9 +99,11 @@ class Office:
     def start_goal(
         self, title: str, description: str = "", checks: list[str] | None = None, reviewer: str | None = None
     ) -> Task:
+        top = self.company.top.name
         if reviewer is not None:
             self._check_agent(reviewer, allow_human=True)
-        top = self.company.top.name
+            if reviewer == top:
+                raise OfficeError(f"the reviewer must be someone other than {top}, who works on the goal")
         t = self.store.create_task(title, top, HUMAN, description, None, checks or [], reviewer)
         self.store.event("goal_created", HUMAN, t.id, title=title, assignee=top, checks=t.checks)
         self.store.wake(top, t.id, "assigned", by=HUMAN)
@@ -389,8 +391,13 @@ class Office:
         t = self.get(task_id)
         if t.status in ("todo", "in_progress", "in_review"):
             raise OfficeError(f"{t.ref} is already open ({t.status})")
-        if t.parent_id is not None and not self.get(t.parent_id).is_open:
-            raise OfficeError(f"{t.ref}'s parent T{t.parent_id} is closed; reopen that first")
+        if t.parent_id is not None:
+            parent = self.get(t.parent_id)
+            if parent.status not in ("todo", "in_progress"):
+                raise OfficeError(
+                    f"{t.ref}'s parent {parent.ref} is {parent.status}; it must be in progress to take work back "
+                    f"(reopen {parent.ref} first)"
+                )
         self.store.update_task(t.id, status="todo", attempts=0, blocked_on=None)
         self.store.event("reopened", HUMAN, t.id, guidance=guidance)
         if guidance:
