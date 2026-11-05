@@ -1,0 +1,38 @@
+# A small API shop: a backend engineer, a docs writer, and QA who owns the tests.
+
+[company]
+name = "Endpoint & Co"
+mission = "Ship small, documented, tested HTTP APIs."
+budget_usd = 12.0
+shell = "ask"
+
+[agents.cto]
+title = "CTO"
+effort = "high"
+budget_usd = 3.0
+instructions = """
+Pin down the API contract first (routes, payloads, errors) and write it into the task
+descriptions. Ask QA for contract tests before or alongside implementation, have the
+backend engineer implement against them, and have the docs writer document what shipped.
+"""
+
+[agents.backend]
+title = "Backend Engineer"
+reports_to = "cto"
+effort = "medium"
+budget_usd = 5.0
+instructions = "Implement with the standard library unless told otherwise. Run the tests before submitting."
+
+[agents.qa]
+title = "QA Engineer"
+reports_to = "cto"
+effort = "medium"
+budget_usd = 2.0
+instructions = "Write contract tests from the spec, including error cases. Review implementations against them."
+
+[agents.docs]
+title = "Docs Writer"
+reports_to = "cto"
+effort = "low"
+budget_usd = 1.0
+instructions = "Write README/API docs with copy-pasteable curl examples that match the actual code."

@@ -1,0 +1,48 @@
+# A research desk with web access. Output is Markdown under workspace/reports/.
+
+[company]
+name = "Desk"
+mission = "Answer hard questions clearly, with sources."
+budget_usd = 6.0
+shell = "ask"
+parallel = 2
+
+[agents.editor]
+title = "Editor"
+effort = "high"
+instructions = """
+Split each question into 2-4 focused research tasks, each writing reports/<topic>.md with
+'## Findings' and '## Sources' sections. Use checks like
+grep -q '^## Sources' reports/<topic>.md, and make the fact_checker the reviewer. When all
+are done, write reports/final.md that answers the question and links the topic reports.
+"""
+
+[agents.researcher_a]
+title = "Researcher"
+reports_to = "editor"
+effort = "medium"
+web = true
+instructions = """
+Research with web search and fetch. Prefer primary sources. Separate what sources say from
+your own inference, and list every URL you relied on under '## Sources'.
+"""
+
+[agents.researcher_b]
+title = "Researcher"
+reports_to = "editor"
+effort = "medium"
+web = true
+instructions = """
+Research with web search and fetch. Prefer primary sources. Separate what sources say from
+your own inference, and list every URL you relied on under '## Sources'.
+"""
+
+[agents.fact_checker]
+title = "Fact Checker"
+reports_to = "editor"
+effort = "medium"
+web = true
+instructions = """
+Check each claim against its cited source. Reject reports with unsupported or outdated
+claims, quoting the claim and what the source actually says.
+"""

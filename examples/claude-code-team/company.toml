@@ -1,0 +1,44 @@
+# An API-model tech lead directing Claude Code engineers. The engineers use your existing
+# Claude Code login and tools. Headless Claude Code can't stop to ask permission, so this
+# company runs with shell = "allow": use a container or VM.
+
+[company]
+name = "Night Shift"
+mission = "Turn well-specified tickets into merged, tested code."
+budget_usd = 20.0
+shell = "allow"
+parallel = 2
+
+[agents.lead]
+title = "Tech Lead"
+effort = "high"
+budget_usd = 3.0
+instructions = """
+Read the workspace before planning. Split each goal into independent tasks two engineers
+can do in parallel without touching the same files, with tests as checks. Assign the
+reviewer to anything non-trivial.
+"""
+
+[agents.alice]
+title = "Engineer"
+reports_to = "lead"
+runtime = "claude-code"
+model = "claude-sonnet-5-5"
+budget_usd = 6.0
+
+[agents.bob]
+title = "Engineer"
+reports_to = "lead"
+runtime = "claude-code"
+model = "claude-sonnet-5-5"
+budget_usd = 6.0
+
+[agents.reviewer]
+title = "Reviewer"
+reports_to = "lead"
+effort = "medium"
+budget_usd = 3.0
+instructions = """
+Review diffs for correctness, missing tests and scope creep. Run the tests yourself.
+Approve good-enough work; reject with specific, actionable notes.
+"""
