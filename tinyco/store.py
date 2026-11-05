@@ -149,14 +149,28 @@ class Store:
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         if str(path) != ":memory:":
-            self.db.execute("PRAGMA journal_mode=WAL")
+            # Set the busy timeout first: other processes (dashboard, MCP servers, a second opener mid-migration)
+            # share the file, and every statement below should wait for a lock rather than fail.
+            self.db.execute("PRAGMA busy_timeout=10000")
+            self._enable_wal()
             # WAL + NORMAL never corrupts the database; at worst the last write before a power cut is lost.
             self.db.execute("PRAGMA synchronous=NORMAL")
-            self.db.execute("PRAGMA busy_timeout=10000")  # other processes (dashboard, MCP servers) share the file
         self.db.executescript(SCHEMA)
         self._migrate()
         self.listeners: list = []
         self.lock = threading.RLock()
+
+    def _enable_wal(self) -> None:
+        """Switch to WAL. Changing journal mode can report busy without waiting, so retry briefly."""
+        for attempt in range(50):
+            try:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) and "busy" not in str(e):
+                    raise
+                time.sleep(0.02 * (attempt + 1))
+        self.db.execute("PRAGMA journal_mode=WAL")
 
     def _migrate(self) -> None:
         """Bring an older database up to date, atomically, even with several processes opening it at once."""
