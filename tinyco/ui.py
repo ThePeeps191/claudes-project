@@ -22,7 +22,11 @@ STATUS_MARK = {
 
 
 def use_color(stream=sys.stdout) -> bool:
-    return stream.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return stream.isatty() and os.environ.get("TERM") != "dumb"
 
 
 class Style:
@@ -56,8 +60,8 @@ class Style:
         code = self._agents.setdefault(name, PALETTE[len(self._agents) % len(PALETTE)])
         return self._c("1;" + code, name)
 
-    def status(self, status: str) -> str:
-        mark = f"{STATUS_MARK.get(status, '?')} {status}"
+    def status(self, status: str, width: int = 0) -> str:
+        mark = f"{STATUS_MARK.get(status, '?')} {status}".ljust(width)
         if status == "done":
             return self.green(mark)
         if status in ("failed", "blocked"):
@@ -113,9 +117,8 @@ class Feed:
             msg = f"  ✎ {who} {'created' if d.get('created') else 'edited'} {d.get('path')}"
         elif k == "command_done":
             ok = d.get("exit") == 0
-            msg = f"  $ {_one_line(d.get('command', ''), 100)}  " + (
-                s.green("✓") if ok else s.red(f"✗ exit {d.get('exit')}")
-            )
+            mark = s.green("✓") if ok else s.red(f"✗ exit {d.get('exit')}")
+            msg = f"  $ {who} {_one_line(d.get('command', ''), 100)}  {mark}"
         elif k == "checks_run":
             res = d.get("results", [])
             n_ok = sum(1 for r in res if r.get("exit") == 0)
@@ -182,7 +185,7 @@ def board(office: Office, style: Style) -> str:
             extra = s.dim(f"  (review: {t.reviewer})")
         if t.attempts:
             extra += s.dim(f"  attempts: {t.attempts}")
-        lines.append(f"{'   ' * depth}{s.status(t.status):<24} {s.bold(t.ref)} {t.title}  {who} {cost_s}{extra}")
+        lines.append(f"{'   ' * depth}{s.status(t.status, 14)} {s.bold(t.ref)} {t.title}  {who} {cost_s}{extra}")
         for c in store.children(t.id):
             walk(c, depth + 1)
 

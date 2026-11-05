@@ -1,7 +1,8 @@
 """Token prices used for budget enforcement (USD per million tokens).
 
 These are list prices for the Claude API at the time of writing. Override or
-extend them in company.toml under ``[pricing."<model-id>"]`` if they change.
+extend them in company.toml under ``[company.pricing."<model-id>"]`` (keys: input,
+output, cache_read in USD per million tokens) if they change.
 """
 
 from __future__ import annotations
