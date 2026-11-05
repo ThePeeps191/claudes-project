@@ -158,6 +158,9 @@ class Store:
         for fn in self.listeners:
             fn({"ts": ts, "kind": kind, "agent": agent, "task_id": task_id, "data": data})
 
+    def last_event_id(self) -> int:
+        return int(self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0])
+
     def events(self, task_id: int | None = None, limit: int = 50, kinds: tuple[str, ...] | None = None) -> list[dict]:
         sql, args = "SELECT * FROM events", []
         where = []
@@ -258,8 +261,26 @@ class Store:
 
     # -- wakes ----------------------------------------------------------------
 
+    def _immediate(self):
+        """A write transaction other processes (dashboard, MCP servers) can't interleave with."""
+        store = self
+
+        class _Tx:
+            def __enter__(self):
+                store.db.execute("BEGIN IMMEDIATE")
+
+            def __exit__(self, exc_type, *_):
+                store.db.execute("ROLLBACK" if exc_type else "COMMIT")
+                return False
+
+        return _Tx()
+
     def wake(self, agent: str, task_id: int, reason: str, **data: Any) -> None:
         """Queue a wake-up, merging into an existing pending wake for the same agent+task."""
+        with self._immediate():
+            self._wake(agent, task_id, reason, **data)
+
+    def _wake(self, agent: str, task_id: int, reason: str, **data: Any) -> None:
         entry = {"reason": reason, **data}
         row = self.db.execute(
             "SELECT id, reasons FROM wakes WHERE agent = ? AND task_id = ? AND status = 'pending'",
@@ -277,6 +298,10 @@ class Store:
 
     def next_wake(self, busy: frozenset[str] | set[str] = frozenset()) -> Wake | None:
         """Claim the oldest pending wake for an agent that isn't already running."""
+        with self._immediate():
+            return self._next_wake(busy)
+
+    def _next_wake(self, busy: frozenset[str] | set[str] = frozenset()) -> Wake | None:
         rows = self.db.execute("SELECT * FROM wakes WHERE status = 'pending' ORDER BY id").fetchall()
         row = next((r for r in rows if r["agent"] not in busy), None)
         if row is None:

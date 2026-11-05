@@ -119,8 +119,8 @@ class Office:
         parent = self.get(parent_id)
         if by != HUMAN and parent.assignee != by:
             raise OfficeError(f"you can only break down tasks you own; {parent.ref} belongs to {parent.assignee}")
-        if not parent.is_open:
-            raise OfficeError(f"{parent.ref} is {parent.status}; you can't add subtasks to it")
+        if parent.status not in ("todo", "in_progress"):
+            raise OfficeError(f"{parent.ref} is {parent.status}; you can only add subtasks to a task in progress")
         self._check_agent(assignee)
         if not self.can_assign(by, assignee):
             allowed = sorted(self.company.subtree(by) | {by})
@@ -172,6 +172,12 @@ class Office:
             self.store.update_task(t.id, status="cancelled", blocked_on=None)
             self.store.event("task_cancelled", by, t.id)
             self._cancel_open_children(t.id, by)
+            if t.parent_id is not None:
+                parent = self.get(t.parent_id)
+                if parent.is_open and parent.assignee != by:
+                    self.store.wake(parent.assignee, parent.id, "subtask_cancelled", subtask=t.id, by=by)
+            elif t.creator == HUMAN:
+                self.store.event("goal_cancelled", by, t.id, title=t.title)
             return f"Cancelled {t.ref}."
         fields: dict = {}
         if description is not None:
@@ -179,8 +185,11 @@ class Office:
         if checks is not None:
             fields["checks"] = [c.strip() for c in checks if c.strip()]
         if reviewer is not None:
-            self._check_agent(reviewer, allow_human=True)
-            fields["reviewer"] = reviewer
+            if reviewer.strip().lower() in ("", "none"):
+                fields["reviewer"] = None
+            else:
+                self._check_agent(reviewer, allow_human=True)
+                fields["reviewer"] = reviewer
         new_assignee = t.assignee
         if assignee is not None:
             self._check_agent(assignee)
@@ -190,6 +199,12 @@ class Office:
             fields["assignee"] = assignee
         if not fields:
             raise OfficeError("nothing to change")
+        new_checks = fields.get("checks", t.checks)
+        new_reviewer = fields["reviewer"] if "reviewer" in fields else t.reviewer
+        if not new_checks and not new_reviewer:
+            raise OfficeError("a task must keep a definition of done: at least one check or a reviewer")
+        if new_reviewer is not None and new_reviewer == new_assignee:
+            raise OfficeError("the reviewer must be someone other than the assignee")
         reopen = t.status in ("failed", "blocked") or assignee is not None
         if reopen:
             fields.update(status="todo", attempts=0, blocked_on=None)
@@ -245,6 +260,13 @@ class Office:
             raise OfficeError(f"{t.ref} still has open subtasks: {refs}. Wait for them or cancel them first.")
 
         results = self.run_checks(t)
+        fresh = self.get(t.id)
+        if fresh.updated_at != t.updated_at:  # cancelled, reassigned or edited while the checks ran
+            self.store.event("submission_discarded", by, t.id, status=fresh.status, assignee=fresh.assignee)
+            return (
+                f"{t.ref} changed while its checks were running (now {fresh.status}, assigned to "
+                f"{fresh.assignee}), so this submission was discarded. End your turn."
+            )
         passed = all(r.passed for r in results)
         self.store.event(
             "checks_run",
@@ -311,31 +333,33 @@ class Office:
 
     def ask_human(self, by: str, task_id: int, question: str) -> str:
         t = self.get(task_id)
-        if by not in (t.assignee, t.reviewer):
-            raise OfficeError("you can only ask about tasks you're working on or reviewing")
+        if by == t.assignee and t.status in ("todo", "in_progress"):
+            pass
+        elif by == t.reviewer and t.status == "in_review":
+            pass
+        else:
+            raise OfficeError(
+                f"you can only ask about a task you're working on or reviewing right now ({t.ref} is {t.status})"
+            )
         self.store.update_task(t.id, status="blocked", blocked_on=f"{HUMAN}: {question}")
         self.store.event("asked_human", by, t.id, question=question, resume=t.status)
         return f"{t.ref} is blocked until a human replies. End your turn; you'll be woken with the answer."
 
     def reply(self, task_id: int, text: str) -> str:
         t = self.get(task_id)
-        if t.status != "blocked":
-            raise OfficeError(f"{t.ref} isn't waiting on anyone ({t.status})")
-        asked = self.store.events(task_id=t.id, limit=1, kinds=("asked_human",))
-        if (
-            asked
-            and (t.blocked_on or "").startswith(HUMAN)
-            and "question" in asked[-1]["data"]
-            and t.blocked_on == f"{HUMAN}: {asked[-1]['data']['question']}"
-        ):
-            who = asked[-1]["agent"] or t.assignee
-            status = asked[-1]["data"].get("resume", "in_progress")
-            if status not in ("todo", "in_progress", "in_review"):
-                status = "in_progress"
-            self.store.update_task(t.id, status=status, blocked_on=None)
-        else:  # escalated to the human (repeated failures, stalls): treat the reply as fresh guidance
+        if t.status != "blocked" or not (t.blocked_on or "").startswith(HUMAN):
+            raise OfficeError(f"{t.ref} isn't waiting on you ({t.status})")
+        last = self.store.events(task_id=t.id, limit=1, kinds=("asked_human", "escalated"))
+        info = last[-1] if last else {"kind": "", "agent": None, "data": {}}
+        d = info["data"]
+        who = d.get("wake") or info["agent"] or t.assignee
+        if who not in self.company.agents:
             who = t.assignee
-            self.store.update_task(t.id, status="in_progress", blocked_on=None, attempts=0)
+        status = d.get("resume") if d.get("resume") in ("todo", "in_progress", "in_review") else "in_progress"
+        fields: dict = {"status": status, "blocked_on": None}
+        if info["kind"] == "escalated":
+            fields["attempts"] = 0  # fresh guidance after repeated failures
+        self.store.update_task(t.id, **fields)
         self.store.event("human_replied", HUMAN, t.id, text=text)
         self.store.wake(who, t.id, "human_replied", text=text)
         return f"Replied to {t.ref}; {who} will pick it up on the next run."
@@ -367,26 +391,40 @@ class Office:
             owner = self.get(t.parent_id).assignee
             self.store.wake(owner, t.parent_id, "subtask_failed", subtask=t.id, why=why, detail=tail(detail, 1500))
         else:
-            self.store.update_task(t.id, status="blocked", blocked_on=f"{HUMAN}: {why}")
-            self.store.event("escalated", by, t.id, why=why, to=HUMAN)
+            self.escalate_to_human(t, by, why, wake=t.assignee, resume="in_progress")
+
+    def escalate_to_human(self, t: Task, by: str, why: str, wake: str | None = None, resume: str | None = None) -> None:
+        """Block ``t`` on the human. Their reply restores ``resume`` and wakes ``wake`` (default: ``by``)."""
+        self.store.update_task(t.id, status="blocked", blocked_on=f"{HUMAN}: {why}")
+        self.store.event("escalated", by, t.id, why=why, to=HUMAN, resume=resume or t.status, wake=wake or by)
 
     def resume_paused(self) -> list[Task]:
-        """Reopen tasks paused for budget or API errors (e.g. after raising a budget)."""
+        """Reopen tasks paused for budget or API errors (e.g. after raising a budget).
+
+        The task goes back to the status it had (in review stays in review) and the
+        agent that was blocked is woken.
+        """
         resumed = []
         for t in self.store.tasks(("blocked",)):
             why = t.blocked_on or ""
-            if why.startswith(("budget:", "model error:")):
-                self.store.update_task(t.id, status="in_progress", blocked_on=None)
-                self.store.event("resumed", None, t.id, why=why)
-                self.store.wake(t.assignee, t.id, "resumed", why=why)
-                resumed.append(t)
+            if not why.startswith(("budget:", "model error:")):
+                continue
+            last = self.store.events(task_id=t.id, limit=1, kinds=("blocked",))
+            info = last[-1]["data"] if last else {}
+            status = info.get("resume") if info.get("resume") in ("todo", "in_progress", "in_review") else "in_progress"
+            agent = info.get("wake") if info.get("wake") in self.company.agents else t.assignee
+            self.store.update_task(t.id, status=status, blocked_on=None)
+            self.store.event("resumed", None, t.id, why=why)
+            self.store.wake(agent, t.id, "resumed", why=why)
+            resumed.append(t)
         return resumed
 
-    def block(self, task_id: int, why: str, by: str) -> None:
+    def block(self, task_id: int, why: str, by: str, wake: str | None = None) -> None:
+        """Pause an open task. ``wake`` is the agent to wake when it resumes (default: the assignee)."""
         t = self.get(task_id)
-        if t.is_open:
+        if t.is_open and t.status != "blocked":
             self.store.update_task(t.id, status="blocked", blocked_on=why)
-            self.store.event("blocked", by, t.id, why=why)
+            self.store.event("blocked", by, t.id, why=why, resume=t.status, wake=wake or t.assignee)
 
     # -- human review -------------------------------------------------------------
 

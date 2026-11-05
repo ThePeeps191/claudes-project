@@ -27,6 +27,10 @@ mode = os.environ.get("FAKE_CLAUDE_MODE", "work")
 if mode == "garbage":
     print("this is not json")
     sys.exit(1)
+if mode == "sleep":
+    import time
+
+    time.sleep(30)
 
 cfg = json.load(open(flag("--mcp-config")))["mcpServers"]["tinyco"]
 proc = subprocess.Popen(

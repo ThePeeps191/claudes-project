@@ -245,8 +245,11 @@ def validate(schema: dict, value: Any, path: str = "input") -> str | None:
 
 def _int(v: Any) -> int:
     if isinstance(v, str):
-        v = v.lstrip("Tt")
-    return int(v)
+        v = v.strip().lstrip("Tt")
+    n = int(v)
+    if not 0 < n < 2**63:
+        raise ValueError(f"no such task id: {v}")
+    return n
 
 
 def clip(text: str, limit: int = MAX_RESULT) -> str:
@@ -276,7 +279,7 @@ class Toolbox:
             return clip(out), False
         except OfficeError as e:
             return str(e), True
-        except (OSError, ValueError, UnicodeDecodeError) as e:
+        except (OSError, ValueError, OverflowError, UnicodeDecodeError) as e:
             return f"{type(e).__name__}: {e}", True
 
     # -- org tools ----------------------------------------------------------------
@@ -311,10 +314,19 @@ class Toolbox:
 
     # -- workspace tools ----------------------------------------------------------
 
-    def _path(self, rel: str) -> Path:
+    def _path(self, rel: str, write: bool = False) -> Path:
         p = (self.ws / rel).resolve()
         if p != self.ws and self.ws not in p.parents:
             raise ValueError(f"{rel!r} is outside the workspace")
+        if write:
+            inside = p.relative_to(self.ws).parts
+            # Git metadata can make git run commands (hooks, fsmonitor, filters), bypassing the shell policy.
+            if ".git" in inside or (inside and inside[-1] in (".gitattributes", ".gitmodules")):
+                raise ValueError(f"{rel!r} is git metadata; agents can't write it")
+            state = self.office.company.state_dir.resolve()
+            config = (self.office.company.root / "company.toml").resolve()
+            if p == config or p == state or state in p.parents:
+                raise ValueError(f"{rel!r} belongs to tinyco itself; agents can't write it")
         return p
 
     def t_list_files(self, path: str = ".", pattern: str | None = None) -> str:
@@ -347,7 +359,7 @@ class Toolbox:
         return out or "(empty file)"
 
     def t_write_file(self, path: str, content: str) -> str:
-        p = self._path(path)
+        p = self._path(path, write=True)
         p.parent.mkdir(parents=True, exist_ok=True)
         existed = p.exists()
         p.write_text(content, encoding="utf-8")
@@ -362,7 +374,7 @@ class Toolbox:
         return f"{'Updated' if existed else 'Created'} {path} ({len(content.splitlines())} lines)."
 
     def t_edit_file(self, path: str, old: str, new: str, replace_all: bool = False) -> str:
-        p = self._path(path)
+        p = self._path(path, write=True)
         if not p.is_file():
             return f"{path} does not exist"
         text = p.read_text(encoding="utf-8")

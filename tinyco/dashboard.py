@@ -125,7 +125,22 @@ def make_handler(office: Office, lock: threading.Lock):
         def _json(self, code: int, obj) -> None:
             self._send(code, json.dumps(obj, default=str).encode())
 
+        def _local(self) -> bool:
+            """Only answer requests addressed to this machine (defeats DNS rebinding)."""
+            port = self.server.server_address[1]
+            allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+            if (self.headers.get("Host") or "").lower() not in allowed:
+                self._json(403, {"error": "unexpected Host header; open the dashboard via 127.0.0.1"})
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None and origin.lower() not in {f"http://{h}" for h in allowed}:
+                self._json(403, {"error": "cross-origin request refused"})
+                return False
+            return True
+
         def do_GET(self) -> None:  # noqa: N802
+            if not self._local():
+                return
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, page, "text/html; charset=utf-8")
@@ -134,12 +149,18 @@ def make_handler(office: Office, lock: threading.Lock):
                     return self._json(200, snapshot(office))
             if url.path == "/api/events":
                 q = parse_qs(url.query)
-                after = int(q.get("after", ["0"])[0] or 0)
-                task = q.get("task", [None])[0]
+                try:
+                    after = int(q.get("after", ["0"])[0] or 0)
+                    task = q.get("task", [None])[0]
+                    task_id = int(task) if task else None
+                    if (task_id is not None and not 0 < task_id < 2**63) or not -1 < after < 2**63:
+                        raise ValueError
+                except ValueError:
+                    return self._json(400, {"error": "bad after/task parameter"})
                 sql, args = "SELECT * FROM events WHERE id > ?", [after]
-                if task:
+                if task_id is not None:
                     sql += " AND task_id = ?"
-                    args.append(int(task))
+                    args.append(task_id)
                 sql += " ORDER BY id DESC LIMIT 300"
                 with lock:
                     rows = office.store.db.execute(sql, args).fetchall()
@@ -158,6 +179,8 @@ def make_handler(office: Office, lock: threading.Lock):
             self._json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._local():
+                return
             if self.headers.get("X-Tinyco") != "1" or "json" not in (self.headers.get("Content-Type") or ""):
                 return self._json(403, {"error": "missing X-Tinyco header"})
             try:
@@ -186,7 +209,7 @@ def make_handler(office: Office, lock: threading.Lock):
                         return self._json(404, {"error": "not found"})
             except OfficeError as e:
                 return self._json(409, {"error": str(e)})
-            except (KeyError, TypeError, ValueError) as e:
+            except (KeyError, TypeError, ValueError, OverflowError) as e:
                 return self._json(400, {"error": f"bad request: {e}"})
             self._json(200, {"ok": True, "message": msg})
 

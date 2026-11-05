@@ -189,9 +189,11 @@ Agents write files and run commands, so treat a run like letting a contractor us
 
 - `shell = "ask"` (the default) asks you before every command and every agent-written check. `allow` runs them without asking; use it in a container or VM, or pass `tinyco run --yes` for one run. `deny` turns commands off entirely.
 - Checks you write yourself (`tinyco goal --check`) always run. Checks written by agents follow the shell policy.
-- File tools are confined to the workspace directory.
+- File tools are confined to the workspace directory. Agents can't write git metadata (`.git/`, `.gitattributes`, `.gitmodules`) or tinyco's own files, and tinyco runs git with hooks and fsmonitor disabled, so the workspace can't make git run code.
 - Commands run without `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` in their environment.
 - Budgets are hard caps checked before each model call.
+- The dashboard only answers requests addressed to `127.0.0.1`/`localhost` (which blocks DNS rebinding), and write requests need a custom header, which blocks cross-site forms.
+- One `tinyco run` per company at a time, enforced with a lock file.
 - Agents with `runtime = "claude-code"` run Claude Code with `--permission-mode bypassPermissions`, so they only run when `shell = "allow"` (or `tinyco run --yes`). Run those companies in a container or VM.
 
 ## Cost

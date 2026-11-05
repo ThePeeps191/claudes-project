@@ -9,12 +9,14 @@ nothing; ``run`` returns.
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import pricing
 from .briefing import briefing, system_prompt
 from .llm import Model, ModelError
-from .office import HUMAN, Office
+from .office import Office
 from .store import Wake
 from .tools import Toolbox, tools_for
 
@@ -26,9 +28,34 @@ class RunSummary:
     wakes: int = 0
     turns: int = 0
     usd: float = 0.0
-    stopped: str = "idle"  # idle | budget | fatal | max_wakes
+    stopped: str = "idle"  # idle | budget | fatal | max_wakes | locked
     error: str | None = None
     goals: list = field(default_factory=list)
+
+
+@contextmanager
+def run_lock(state_dir: Path):
+    """An exclusive per-company lock so two runs never claim the same wakes."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    f = open(state_dir / "run.lock", "a+")
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:  # Windows
+            import msvcrt
+
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            yield False
+            return
+        yield True
+    except OSError:
+        yield False
+    finally:
+        f.close()
 
 
 class Runner:
@@ -63,6 +90,14 @@ class Runner:
         With ``parallel > 1``, up to that many agents work at once. One agent never
         runs two wakes at the same time.
         """
+        with run_lock(self.company.state_dir) as locked:
+            if not locked:
+                summary = RunSummary(stopped="locked")
+                summary.error = "another `tinyco run` is already working on this company"
+                return summary
+            return self._run(max_wakes, parallel)
+
+    def _run(self, max_wakes: int | None, parallel: int) -> RunSummary:
         summary = RunSummary()
         start_spend = self.store.spent()
         recovered = self.store.requeue_running()
@@ -133,7 +168,10 @@ class Runner:
                 self.store.finish_wake(wake.id, "pending")  # retried on the next run
                 return 0, str(e)
             self.store.finish_wake(wake.id, "error")
-            self.office.block(wake.task_id, f"model error: {e}", wake.agent)
+            if e.escalate:
+                self._give_up(wake.agent, wake.task_id, str(e))
+            else:
+                self._pause(wake.agent, wake.task_id, f"model error: {e}")
             return 0, None
         except KeyboardInterrupt:
             self.store.finish_wake(wake.id, "pending")
@@ -163,7 +201,7 @@ class Runner:
             return 0
         reason = self.over_budget(name)
         if reason:
-            self.office.block(wake.task_id, f"budget: {reason}", name)
+            self._pause(name, wake.task_id, f"budget: {reason}")
             return 0
 
         agent = self.company.agents[name]
@@ -172,11 +210,12 @@ class Runner:
             task = self.store.update_task(task.id, status="in_progress")
 
         self.store.event("wake", name, task.id, reasons=[r.get("reason") for r in wake.reasons])
+        since = self.store.last_event_id()
         if agent.runtime == "claude-code":
             from .external import run_claude_code
 
             turns = run_claude_code(self.office, agent, wake, self._budget_left(name))
-            self._after_run(name, task.id)
+            self._after_run(name, task.id, wake, since)
             return turns
 
         box = Toolbox(self.office, name, task)
@@ -189,7 +228,7 @@ class Runner:
         while turns < agent.max_turns:
             reason = self.over_budget(name)
             if reason:
-                self.office.block(task.id, f"budget: {reason}", name)
+                self._pause(name, task.id, f"budget: {reason}")
                 break
             turn = self.model.respond(agent=agent, system=system, messages=messages, tools=tools)
             turns += 1
@@ -205,7 +244,7 @@ class Runner:
             messages.append({"role": "assistant", "content": turn.content})
 
             if turn.stop_reason == "refusal":
-                self.office.block(task.id, f"model declined: {turn.refusal}", name)
+                self._give_up(name, task.id, f"model declined: {turn.refusal}")
                 break
             if turn.stop_reason == "pause_turn":
                 continue
@@ -232,31 +271,81 @@ class Runner:
         else:
             self.store.event("turn_limit", name, task.id, turns=turns)
 
-        self._after_run(name, task.id)
+        self._after_run(name, task.id, wake, since)
         return turns
 
-    def _after_run(self, name: str, task_id: int) -> None:
-        """Catch runs that ended without moving their task forward."""
+    # -- outcomes -----------------------------------------------------------------
+
+    def _role(self, name: str, t) -> str | None:
+        """The part ``name`` currently plays on task ``t``, if any."""
+        if t.assignee == name and t.status in ("todo", "in_progress"):
+            return "assignee"
+        if t.reviewer == name and t.status == "in_review":
+            return "reviewer"
+        return None
+
+    def _pause(self, name: str, task_id: int, why: str) -> None:
+        """A recoverable stop (budget, API error). Pauses the task only if ``name`` is working on it."""
         t = self.office.get(task_id)
-        owes = (
-            t.assignee == name
-            and t.status in ("todo", "in_progress")
-            and not any(c.is_open for c in self.store.children(t.id))
-        )
-        owes = owes or (t.reviewer == name and t.status == "in_review")
-        if not owes or self.store.has_pending_wake(name, t.id):
+        if self._role(name, t):
+            self.office.block(task_id, why, name, wake=name)
+        else:
+            self.store.event("skipped", name, task_id, why=why)
+
+    def _give_up(self, name: str, task_id: int, why: str) -> None:
+        """A stop that needs someone else to decide: escalate to the manager, or to the human at the top."""
+        t = self.office.get(task_id)
+        role = self._role(name, t)
+        if role is None:
+            self.store.event("skipped", name, task_id, why=why)
+        elif role == "assignee" and t.parent_id is not None:
+            self.office._escalate(t, name, why, "")
+        else:
+            self.office.escalate_to_human(t, name, why)
+
+    def _nudges(self, name: str, task_id: int) -> int:
+        """Nudges ``name`` got on this task since the last sign of real progress."""
+        n = 0
+        for e in reversed(self.store.events(task_id=task_id, limit=300)):
+            if e["kind"] in ("human_replied", "task_updated", "checks_run", "reviewed", "resumed", "task_created"):
+                break
+            if e["kind"] == "nudged" and e["agent"] == name:
+                n += 1
+        return n
+
+    def _after_run(self, name: str, task_id: int, wake: Wake | None = None, since: int = 0) -> None:
+        """Keep work moving after a run: answer askers, and catch runs that ended without progress."""
+        # Whoever asked this agent something in a comment can now look for the answer.
+        for r in wake.reasons if wake else []:
+            asker = r.get("by")
+            if r.get("reason") == "comment" and asker in self.company.agents and asker != name:
+                at = self.office.get(task_id)
+                if self._role(asker, at) and not self.store.has_pending_wake(asker, task_id):
+                    self.store.wake(asker, task_id, "comment_seen", by=name)
+
+        t = self.office.get(task_id)
+        role = self._role(name, t)
+        if role == "assignee" and any(c.is_open for c in self.store.children(t.id)):
+            role = None  # waiting on its own subtasks is fine
+        if role is None or self.store.has_pending_wake(name, t.id):
             return
-        nudges = len(self.store.events(task_id=t.id, limit=100, kinds=("nudged",)))
-        if nudges < MAX_NUDGES:
+        asked = [
+            e
+            for e in self.store.events(task_id=t.id, limit=50, kinds=("comment",))
+            if e["id"] > since and e["agent"] == name and e["data"].get("notify")
+        ]
+        if asked:
+            self.store.event("waiting", name, t.id, on=sorted({n for e in asked for n in e["data"]["notify"]}))
+            return  # waiting for an answer; the person asked is woken and we'll be woken after
+        if self._nudges(name, t.id) < MAX_NUDGES:
             self.store.event("nudged", name, t.id)
             self.store.wake(name, t.id, "nudge")
             return
         why = "stalled: runs keep ending without progress"
-        if t.parent_id is not None and t.assignee == name:
+        if t.parent_id is not None and role == "assignee":
             self.office._escalate(t, name, why, "")
         else:
-            self.store.update_task(t.id, status="blocked", blocked_on=f"{HUMAN}: {why}")
-            self.store.event("escalated", name, t.id, why=why, to=HUMAN)
+            self.office.escalate_to_human(t, name, why)
 
 
 def _brief_input(v) -> dict:
