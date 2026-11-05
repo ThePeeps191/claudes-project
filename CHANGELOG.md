@@ -7,6 +7,8 @@
 - `tinyco cost`: spend by agent, model, goal and task, with prompt-cache hit rates.
 - `tinyco run --watch`, `[[routines]]` (recurring goals, `every`/`at`) and `tinyco routines`.
 - `budget_period` (day/week/month) so budgets reset for long-running companies.
+- Shared company notes (`note(..., shared=true)`) in every agent's briefing; notes capped at 600 characters.
+- `tinyco reopen ID ["guidance"]` and `tinyco goal -f spec.md`.
 - Repository renamed to `tinyco`.
 
 ## 0.1.0 (unreleased)

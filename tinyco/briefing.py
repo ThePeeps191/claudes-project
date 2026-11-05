@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 
 from .config import AgentSpec, Company
-from .office import HUMAN, Office
+from .office import COMPANY_NOTES, HUMAN, Office
 from .store import Task, Wake
 
 SYSTEM = """\
@@ -44,6 +44,7 @@ REASON_TEXT = {
     "comment": "{by} commented and asked you to read it.",
     "resumed": "Work on this task was paused ({why}) and has now resumed.",
     "comment_seen": "{by} has read your comment. Check the recent activity for their answer, then carry on.",
+    "reopened": "The human reopened this task with a clean slate.",
     "nudge": "Your last run ended without finishing, delegating, or blocking this task. Continue it now, and submit when it's done.",
 }
 
@@ -241,7 +242,7 @@ def _reason(r: dict) -> str:
     text = template.format(**fields)
     if r.get("reason") == "changes_requested" and r.get("notes"):
         text += f"\n  Reviewer notes: {r['notes']}"
-    if r.get("reason") == "human_replied" and r.get("text"):
+    if r.get("reason") in ("human_replied", "reopened") and r.get("text"):
         text += f"\n  Reply: {r['text']}"
     if r.get("reason") == "comment" and r.get("text"):
         text += f"\n  Comment: {r['text']}"
@@ -268,6 +269,9 @@ def briefing(office: Office, agent: AgentSpec, wake: Wake) -> str:
         parts += ["", "Your other open tasks (you'll be woken for these separately):"]
         parts += [f"- {_status_line(x)}" for x in other]
 
+    shared = office.store.notes(COMPANY_NOTES, limit=15)
+    if shared:
+        parts += ["", "Company notes (shared by the team):"] + [f"- {n}" for n in shared]
     notes = office.store.notes(agent.name)
     if notes:
         parts += ["", "Your notes:"] + [f"- {n}" for n in notes]

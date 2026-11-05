@@ -339,19 +339,27 @@ def test_parallel_agents_really_overlap(make_office):
 
         return turn
 
+    def lead(messages):
+        # Depending on timing, the lead may hear about a's completion while b is still working.
+        if isinstance(messages[-1]["content"], list):  # just got tool results back
+            return [say("ok")]
+        if "Subtasks (2: 2 done)" in messages[0]["content"]:
+            return [call("submit", task_id=1, summary="both parts")]
+        return [say("waiting for the other part")]
+
     model = ScriptedModel(
         {
             "a": [meet(2), [say("done")]],
             "b": [meet(3), [say("done")]],
-            "lead": [[call("submit", task_id=1, summary="both parts")], [say("ok")]],
+            "lead": [lead] * 4,
         }
     )
     summary = Runner(office, model).run(parallel=2)
     assert summary.stopped == "idle", summary.error
     assert {t.id: t.status for t in office.store.tasks()} == {1: "done", 2: "done", 3: "done"}
-    # The lead was woken once for both completions, not twice.
+    # Completions arriving together merge into one wake; arriving apart, the lead hears about each.
     lead_wakes = [e for e in office.store.events(limit=200, kinds=("wake",)) if e["agent"] == "lead"]
-    assert len(lead_wakes) == 1
+    assert 1 <= len(lead_wakes) <= 2
 
 
 def test_one_agent_never_runs_two_wakes_at_once(office):
