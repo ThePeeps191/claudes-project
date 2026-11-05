@@ -10,3 +10,4 @@
 - `web = true`: server-side web search and fetch.
 - Parallel wakes (`tinyco run -j N`), per-agent git commits in the workspace.
 - `tinyco dashboard` (local web UI) and `tinyco demo` (scripted run, no API key).
+- Hardening from an independent review: agents can't write git metadata or tinyco state; git runs without hooks/fsmonitor; dashboard checks Host/Origin; cancels, refusals and timeouts always reach a manager or the human; submissions discarded if the task changed mid-check; nudges reset on progress and agents waiting on a question aren't nudged; single-run lock and crash recovery; input bounds in tools and CLI.

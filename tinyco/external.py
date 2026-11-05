@@ -45,13 +45,11 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
     """Run one wake through Claude Code. Returns the number of turns it reported."""
     company, store, task = office.company, office.store, office.get(wake.task_id)
     if company.shell != "allow":
-        office.block(
-            task.id,
-            'claude-code agents need shell = "allow" (or `tinyco run --yes`): headless Claude '
-            "Code can't stop to ask you about commands. Use a container or VM.",
-            agent.name,
+        raise ModelError(
+            f'{agent.name} runs on Claude Code, which needs company.shell = "allow" (or `tinyco run --yes`): '
+            "headless Claude Code can't stop to ask you about commands. Use a container or VM.",
+            fatal=True,
         )
-        return 0
     exe = shutil.which(agent.command)
     if exe is None:
         raise ModelError(
@@ -97,12 +95,14 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
                 env=os.environ.copy(),
             )
         except subprocess.TimeoutExpired as e:
-            raise ModelError(f"Claude Code run timed out after {TIMEOUT}s") from e
+            _charge_unknown(office, agent, task.id, budget_left)
+            raise ModelError(f"Claude Code run timed out after {TIMEOUT}s", escalate=True) from e
 
     result = _parse(p.stdout)
     if result is None:
+        _charge_unknown(office, agent, task.id, budget_left)
         detail = (p.stderr or p.stdout or "").strip()[-800:]
-        raise ModelError(f"Claude Code exited {p.returncode} without a JSON result: {detail}")
+        raise ModelError(f"Claude Code exited {p.returncode} without a JSON result: {detail}", escalate=True)
 
     usd = float(result.get("total_cost_usd") or 0.0)
     u = result.get("usage") or {}
@@ -125,6 +125,19 @@ def run_claude_code(office: Office, agent: AgentSpec, wake: Wake, budget_left: f
     elif result.get("is_error"):
         raise ModelError(f"Claude Code run failed ({subtype or 'error'}): {text[:500]}")
     return max(turns, 1)
+
+
+def _charge_unknown(office: Office, agent: AgentSpec, task_id: int, cap: float | None) -> None:
+    """A run that died without reporting its cost may have spent up to its --max-budget-usd cap: count that."""
+    if cap and cap > 0:
+        office.store.record_spend(agent.name, task_id, f"claude-code:{agent.model}:estimate", {}, cap)
+        office.store.event(
+            "spend_estimated",
+            agent.name,
+            task_id,
+            usd=round(cap, 4),
+            why="Claude Code exited without reporting its cost; counted its full budget cap",
+        )
 
 
 def _parse(stdout: str) -> dict | None:

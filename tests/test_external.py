@@ -101,9 +101,9 @@ def test_claude_code_agent_does_the_work_through_mcp(make_office, fake_claude, t
 def test_claude_code_requires_shell_allow(make_office, fake_claude):
     office = _company(make_office, fake_claude, shell="ask")
     office.start_goal("Anything")
-    Runner(office, NoApi()).run()
-    t = office.get(1)
-    assert t.status == "blocked" and 'shell = "allow"' in t.blocked_on
+    summary = Runner(office, NoApi()).run()
+    assert summary.stopped == "fatal" and 'shell = "allow"' in summary.error
+    assert len(office.store.pending_wakes()) == 1  # nothing lost; fix the config and run again
 
 
 def test_missing_claude_binary_is_fatal(make_office, fake_claude):

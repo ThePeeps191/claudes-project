@@ -86,7 +86,11 @@ def cmd_init(args) -> int:
 
 def cmd_goal(args) -> int:
     company, store, office = open_company(args)
-    t = office.start_goal(args.title, args.description or "", args.check, args.review)
+    try:
+        t = office.start_goal(args.title, args.description or "", args.check, args.review)
+    except OfficeError as e:
+        print(f"tinyco: {e}", file=sys.stderr)
+        return 1
     style = Style(use_color())
     print(f"{style.bold(t.ref)} {t.title} → {style.agent(t.assignee)}")
     if not t.checks and not t.reviewer:
@@ -108,11 +112,14 @@ def cmd_run(args) -> int:
     office._approve = make_approver(style)
     if not args.quiet:
         store.listeners.append(Feed(style, verbose=args.verbose))
-    if not store.pending_wakes() and not any(
-        t.status == "blocked" and (t.blocked_on or "").startswith(("budget:", "model error:")) for t in store.tasks()
-    ):
-        print(style.dim('Nothing to do: no pending work. Add a goal with: tinyco goal "..."'))
-        return 0
+    cc = [a.name for a in company.agents.values() if a.runtime == "claude-code"]
+    if cc and company.shell != "allow":
+        print(
+            f"tinyco: {', '.join(cc)} run on Claude Code, which can't stop to ask about commands. "
+            'Set shell = "allow" in company.toml (in a container or VM) or run with --yes.',
+            file=sys.stderr,
+        )
+        return 1
     started = time.time()
     try:
         summary = Runner(office, ClaudeModel()).run(max_wakes=args.max_wakes, parallel=args.jobs or company.parallel)
@@ -120,6 +127,12 @@ def cmd_run(args) -> int:
         print(style.yellow("\ninterrupted; pending work is saved. Resume with: tinyco run"))
         return 130
     took = time.time() - started
+    if summary.stopped == "locked":
+        print(style.red(f"tinyco: {summary.error}"), file=sys.stderr)
+        return 1
+    if summary.wakes == 0 and summary.stopped == "idle":
+        print(style.dim('Nothing to do: no pending work. Add a goal with: tinyco goal "..."'))
+        return 0
     print()
     print(board(office, style))
     print()
@@ -205,8 +218,12 @@ def cmd_inbox(args) -> int:
     return 0
 
 
-def _tid(v: str) -> int:
-    return int(str(v).lstrip("Tt"))
+def _tid(v) -> int:
+    """Parse a task id like 7 or T7 (argparse type)."""
+    s = str(v).strip().lstrip("Tt")
+    if not s.isdigit() or not 0 < int(s) < 2**63:
+        raise argparse.ArgumentTypeError(f"not a task id: {v!r}")
+    return int(s)
 
 
 def _act(args, fn) -> int:
@@ -362,29 +379,29 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_log)
 
     s = sub.add_parser("task", help="show one task in detail")
-    s.add_argument("id")
+    s.add_argument("id", type=_tid)
     s.set_defaults(fn=cmd_task)
 
     s = sub.add_parser("inbox", help="questions and reviews waiting on you")
     s.set_defaults(fn=cmd_inbox)
 
     s = sub.add_parser("reply", help="answer an agent's question")
-    s.add_argument("id")
+    s.add_argument("id", type=_tid)
     s.add_argument("text")
     s.set_defaults(fn=cmd_reply)
 
     s = sub.add_parser("approve", help="approve work waiting on your review")
-    s.add_argument("id")
+    s.add_argument("id", type=_tid)
     s.add_argument("--notes", default="")
     s.set_defaults(fn=cmd_approve)
 
     s = sub.add_parser("reject", help="send work back with notes")
-    s.add_argument("id")
+    s.add_argument("id", type=_tid)
     s.add_argument("notes")
     s.set_defaults(fn=cmd_reject)
 
     s = sub.add_parser("cancel", help="cancel a task and its open subtasks")
-    s.add_argument("id")
+    s.add_argument("id", type=_tid)
     s.set_defaults(fn=cmd_cancel)
 
     s = sub.add_parser("org", help="show the org chart")
@@ -404,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Internal: the org-tools MCP server that external agent runtimes connect to.
     s = sub.add_parser("mcp-serve")
     s.add_argument("--agent", required=True)
-    s.add_argument("--task", required=True)
+    s.add_argument("--task", required=True, type=_tid)
     s.add_argument("--allow-shell", action="store_true")
     s.set_defaults(fn=cmd_mcp_serve)
     return p

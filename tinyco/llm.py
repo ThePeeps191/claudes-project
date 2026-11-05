@@ -37,9 +37,10 @@ class Turn:
 class ModelError(RuntimeError):
     """A model call failed in a way the run cannot recover from."""
 
-    def __init__(self, message: str, fatal: bool = False):
+    def __init__(self, message: str, fatal: bool = False, escalate: bool = False):
         super().__init__(message)
         self.fatal = fatal  # True: stop the whole company (e.g. bad credentials)
+        self.escalate = escalate  # True: don't retry automatically; hand the task to a person
 
 
 class Model(Protocol):

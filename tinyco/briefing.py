@@ -42,6 +42,7 @@ REASON_TEXT = {
     "human_replied": "The human replied to your question.",
     "comment": "{by} commented and asked you to read it.",
     "resumed": "Work on this task was paused ({why}) and has now resumed.",
+    "comment_seen": "{by} has read your comment. Check the recent activity for their answer, then carry on.",
     "nudge": "Your last run ended without finishing, delegating, or blocking this task. Continue it now, and submit when it's done.",
 }
 

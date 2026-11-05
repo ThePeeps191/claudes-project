@@ -164,6 +164,13 @@ def parse(data: dict, root: Path) -> Company:
     if shell not in SHELL_POLICIES:
         raise ConfigError(f"company.shell must be one of {', '.join(SHELL_POLICIES)}")
 
+    ws = (root / c.get("workspace", "workspace")).resolve()
+    if ws == root.resolve() or ws in root.resolve().parents:
+        raise ConfigError(
+            "company.workspace must not contain company.toml or .tinyco/ (agents write freely in the workspace); "
+            'use a subdirectory such as "workspace"'
+        )
+
     return Company(
         name=c.get("name", root.name),
         mission=(c.get("mission") or "").strip(),
