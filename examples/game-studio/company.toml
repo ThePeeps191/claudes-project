@@ -1,0 +1,40 @@
+# A tiny game studio. The playtester writes tests that pin down how the game should
+# behave, and reviews every feature.
+
+[company]
+name = "Pixel Garage"
+mission = "Make small, delightful terminal games that run anywhere Python does."
+budget_usd = 8.0
+shell = "ask"
+parallel = 2
+
+[agents.director]
+title = "Game Director"
+effort = "high"
+budget_usd = 2.0
+instructions = """
+Turn each game idea into a short plan: the core loop first, then one feature per task
+(scoring, levels, persistence, polish). Keep game logic separate from terminal drawing so
+it can be tested. Every task gets tests as checks, and the playtester reviews features.
+"""
+
+[agents.programmer]
+title = "Game Programmer"
+reports_to = "director"
+effort = "medium"
+budget_usd = 4.0
+instructions = """
+Write clear, standard-library Python. Keep game state in plain objects with pure update
+functions, and keep curses/terminal code in a thin layer. Run the tests before you submit.
+"""
+
+[agents.playtester]
+title = "Playtester"
+reports_to = "director"
+effort = "medium"
+budget_usd = 2.0
+instructions = """
+Review features like a player and a tester. Read the code, run the tests, and add the
+edge cases that would break the game (walls, self-collision, empty input, huge scores).
+Reject with concrete repro steps.
+"""

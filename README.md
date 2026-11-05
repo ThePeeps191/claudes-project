@@ -56,7 +56,7 @@ tinyco reply 4 "Use Postgres"   # answer an agent; it picks up on the next run
 tinyco approve 1                # if you asked to review the result yourself
 ```
 
-The code lands in `./workspace`. Templates: `tinyco init -t startup` (default), `-t solo`, `-t research`.
+The code lands in `./workspace`. Templates: `tinyco init -t startup` (default), `-t solo`, `-t research`. More org shapes are in [`examples/`](examples/): a game studio, a Claude Code team, a research desk with web access, and an API shop.
 
 ## Why tinyco
 
