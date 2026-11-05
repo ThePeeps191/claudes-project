@@ -140,7 +140,7 @@ def test_real_sdk_request_and_replay(tmp_path):
     assert turn.thinking == "Plan: save a note."
     assert turn.text == "Saving a note."
     assert [(c.name, c.input) for c in turn.tool_calls] == [("note", {"text": "use pytest"})]
-    assert turn.usage == {"input": 50, "output": 30, "cache_read": 0, "cache_write": 40}
+    assert turn.usage == {"input": 50, "output": 30, "cache_read": 0, "cache_write": 40, "web_searches": 0}
 
     body = bodies[0]
     assert body["model"] == "claude-opus-5-5"

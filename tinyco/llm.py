@@ -30,6 +30,7 @@ class Turn:
     text: str = ""
     thinking: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    server_calls: list[ToolCall] = field(default_factory=list)  # web search/fetch run by the API
     refusal: str | None = None
 
 
@@ -52,7 +53,7 @@ def _get(block: Any, key: str, default: Any = None) -> Any:
 
 
 def normalize(content: list, stop_reason: str, model: str, usage: dict, refusal: str | None = None) -> Turn:
-    texts, thoughts, calls = [], [], []
+    texts, thoughts, calls, server = [], [], [], []
     for b in content:
         t = _get(b, "type")
         if t == "text":
@@ -62,6 +63,8 @@ def normalize(content: list, stop_reason: str, model: str, usage: dict, refusal:
                 thoughts.append(_get(b, "thinking"))
         elif t == "tool_use":
             calls.append(ToolCall(_get(b, "id"), _get(b, "name"), _get(b, "input")))
+        elif t == "server_tool_use":
+            server.append(ToolCall(_get(b, "id"), _get(b, "name"), _get(b, "input")))
     return Turn(
         content=content,
         stop_reason=stop_reason or "end_turn",
@@ -70,6 +73,7 @@ def normalize(content: list, stop_reason: str, model: str, usage: dict, refusal:
         text="\n".join(x for x in texts if x).strip(),
         thinking="\n".join(thoughts).strip(),
         tool_calls=calls,
+        server_calls=server,
         refusal=refusal,
     )
 
@@ -97,7 +101,8 @@ class ClaudeModel:
             max_tokens=self.max_tokens,
             system=system,
             messages=messages,
-            tools=[{**t, "eager_input_streaming": True} for t in tools],
+            # Eager input streaming applies to client tools only, never server tools (web search/fetch).
+            tools=[{**t, "eager_input_streaming": True} if "input_schema" in t else t for t in tools],
             thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": agent.effort},
             cache_control={"type": "ephemeral"},
@@ -130,11 +135,13 @@ class ClaudeModel:
             raise
 
         u = msg.usage
+        server = getattr(u, "server_tool_use", None)
         usage = {
             "input": u.input_tokens or 0,
             "output": u.output_tokens or 0,
             "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0,
             "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0,
+            "web_searches": (getattr(server, "web_search_requests", 0) or 0) if server is not None else 0,
         }
         refusal = None
         if msg.stop_reason == "refusal":

@@ -16,7 +16,7 @@ from .briefing import briefing, system_prompt
 from .llm import Model, ModelError
 from .office import HUMAN, Office
 from .store import Wake
-from .tools import TOOLS, Toolbox
+from .tools import Toolbox, tools_for
 
 MAX_NUDGES = 2
 
@@ -47,6 +47,13 @@ class Runner:
         if spec.budget_usd is not None and self.store.spent(agent=agent) >= spec.budget_usd:
             return f"{agent}'s budget of ${spec.budget_usd:.2f} is used up"
         return None
+
+    def _budget_left(self, agent: str) -> float | None:
+        left = self.company.budget_usd - self.store.spent()
+        spec = self.company.agents[agent]
+        if spec.budget_usd is not None:
+            left = min(left, spec.budget_usd - self.store.spent(agent=agent))
+        return left
 
     # -- the queue --------------------------------------------------------------
 
@@ -165,9 +172,17 @@ class Runner:
             task = self.store.update_task(task.id, status="in_progress")
 
         self.store.event("wake", name, task.id, reasons=[r.get("reason") for r in wake.reasons])
+        if agent.runtime == "claude-code":
+            from .external import run_claude_code
+
+            turns = run_claude_code(self.office, agent, wake, self._budget_left(name))
+            self._after_run(name, task.id)
+            return turns
+
         box = Toolbox(self.office, name, task)
         system = system_prompt(self.company, agent)
         messages: list = [{"role": "user", "content": briefing(self.office, agent, wake)}]
+        tools = tools_for(agent)
         turns = 0
         overrides = self.company.extra.get("pricing")
 
@@ -176,12 +191,15 @@ class Runner:
             if reason:
                 self.office.block(task.id, f"budget: {reason}", name)
                 break
-            turn = self.model.respond(agent=agent, system=system, messages=messages, tools=TOOLS)
+            turn = self.model.respond(agent=agent, system=system, messages=messages, tools=tools)
             turns += 1
             usd = pricing.cost(turn.model, turn.usage, overrides)
             self.store.record_spend(name, task.id, turn.model, turn.usage, usd)
             if turn.thinking:
                 self.store.event("thinking", name, task.id, text=turn.thinking[:2000])
+            for sc in turn.server_calls:
+                inp = sc.input if isinstance(sc.input, dict) else {}
+                self.store.event(sc.name, name, task.id, query=inp.get("query"), url=inp.get("url"))
             if turn.text:
                 self.store.event("said", name, task.id, text=turn.text[:4000])
             messages.append({"role": "assistant", "content": turn.content})

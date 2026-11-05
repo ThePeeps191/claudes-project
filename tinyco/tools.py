@@ -171,6 +171,36 @@ TOOLS: list[dict] = [
 ]
 
 TOOL_NAMES = {t["name"] for t in TOOLS}
+
+# Models that support the dynamic-filtering web tool versions; others get the basic ones.
+_NEW_WEB = (
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-fable-5-1",
+    "claude-fable-5",
+)
+
+
+def web_tools(model: str) -> list[dict]:
+    if model in _NEW_WEB:
+        return [
+            {"type": "web_search_20260209", "name": "web_search"},
+            {"type": "web_fetch_20260209", "name": "web_fetch"},
+        ]
+    return [{"type": "web_search_20250305", "name": "web_search"}, {"type": "web_fetch_20250910", "name": "web_fetch"}]
+
+
+def tools_for(agent) -> list[dict]:
+    """The tool list for an agent: the same for every call it makes (prompt-cache friendly)."""
+    return TOOLS + web_tools(agent.model) if agent.web else TOOLS
+
+
 _SCHEMAS = {t["name"]: t["input_schema"] for t in TOOLS}
 
 

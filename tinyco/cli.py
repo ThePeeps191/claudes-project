@@ -296,6 +296,24 @@ def cmd_demo(args) -> int:
     return 0
 
 
+def cmd_mcp_serve(args) -> int:
+    from .mcp import Server, serve_stdio
+
+    company, store, office = open_company(args)
+    if args.allow_shell:
+        company.shell = "allow"
+    try:
+        server = Server(office, args.agent, _tid(args.task))
+    except OfficeError as e:
+        print(f"tinyco: {e}", file=sys.stderr)
+        return 1
+    if args.agent not in company.agents:
+        print(f"tinyco: unknown agent {args.agent!r}", file=sys.stderr)
+        return 1
+    serve_stdio(server)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="tinyco",
@@ -382,6 +400,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fast", action="store_true", help="no pauses")
     s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
     s.set_defaults(fn=cmd_demo)
+
+    # Internal: the org-tools MCP server that external agent runtimes connect to.
+    s = sub.add_parser("mcp-serve")
+    s.add_argument("--agent", required=True)
+    s.add_argument("--task", required=True)
+    s.add_argument("--allow-shell", action="store_true")
+    s.set_defaults(fn=cmd_mcp_serve)
     return p
 
 

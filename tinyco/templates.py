@@ -94,9 +94,10 @@ Finally write reports/final.md that answers the question, and submit the goal.
 title = "Researcher"
 reports_to = "editor"
 effort = "medium"
+web = true                # server-side web search and fetch
 instructions = """
-Research the assigned question using the tools you have and write the requested report.
-Separate what you know from what you infer, and list sources or reasoning in a
+Research the assigned question with web search and fetch, and write the requested report.
+Separate what sources say from what you infer, and list the URLs you relied on in a
 '## Sources' section.
 """
 
@@ -104,6 +105,7 @@ Separate what you know from what you infer, and list sources or reasoning in a
 title = "Fact Checker"
 reports_to = "editor"
 effort = "medium"
+web = true
 instructions = """
 Review reports for unsupported claims, errors and missing caveats. Reject with specific
 notes when claims aren't backed up.

@@ -155,7 +155,7 @@ def test_claude_model_request_shape(tmp_path):
     assert "temperature" not in p
     assert turn.text == "On it." and turn.thinking == "plan it"
     assert turn.tool_calls[0].name == "note"
-    assert turn.usage == {"input": 10, "output": 5, "cache_read": 100, "cache_write": 7}
+    assert turn.usage == {"input": 10, "output": 5, "cache_read": 100, "cache_write": 7, "web_searches": 0}
     assert turn.content is not None and len(turn.content) == 3
 
 
@@ -194,3 +194,59 @@ model = "my-model"
     c = parse(tomllib.loads(text), tmp_path)
     overrides = c.extra.get("pricing")
     assert pricing.cost("my-model", {"input": 1_000_000, "output": 1_000_000}, overrides) == pytest.approx(3.0)
+
+
+def test_web_tools_for_web_agents(tmp_path):
+    from tinyco.tools import TOOLS, tools_for
+
+    c = parse(
+        {
+            "agents": {
+                "a": {"web": True},
+                "b": {"reports_to": "a"},
+                "h": {"reports_to": "a", "web": True, "model": "claude-haiku-5-5"},
+            }
+        },
+        tmp_path,
+    )
+    assert tools_for(c.agents["b"]) is TOOLS
+    web = [t["type"] for t in tools_for(c.agents["a"]) if "type" in t]
+    assert web == ["web_search_20260209", "web_fetch_20260209"]
+    assert [t["type"] for t in tools_for(c.agents["h"]) if "type" in t] == ["web_search_20250305", "web_fetch_20250910"]
+
+
+def test_server_tools_do_not_get_eager_streaming(tmp_path):
+    from tinyco.tools import tools_for
+
+    msg = SimpleNamespace(
+        content=[],
+        stop_reason="end_turn",
+        model="claude-opus-5-5",
+        usage=SimpleNamespace(
+            input_tokens=1,
+            output_tokens=1,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+            server_tool_use=SimpleNamespace(web_search_requests=3),
+        ),
+    )
+    client = _FakeClient(msg)
+    agent = parse({"agents": {"a": {"web": True}}}, tmp_path).agents["a"]
+    turn = ClaudeModel(client).respond(agent=agent, system="s", messages=[], tools=tools_for(agent))
+    for t in client.params["tools"]:
+        assert ("eager_input_streaming" in t) == ("input_schema" in t)
+    assert turn.usage["web_searches"] == 3
+    assert pricing.cost("claude-opus-5-5", {"web_searches": 3}) == pytest.approx(0.03)
+
+
+def test_web_searches_show_up_in_events(office):
+    from tinyco.runner import Runner
+    from tinyco.scripted import ScriptedModel, say
+
+    office.start_goal("Look something up")
+    search = {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "tinyco"}}
+    result = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": []}
+    model = ScriptedModel({"ceo": [[search, result, say("Found nothing.")]]})
+    Runner(office, model).run(max_wakes=1)
+    ev = office.store.events(kinds=("web_search",))
+    assert ev and ev[0]["data"]["query"] == "tinyco"

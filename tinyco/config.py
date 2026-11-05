@@ -9,6 +9,7 @@ from pathlib import Path
 DEFAULT_MODEL = "claude-opus-5-5"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 SHELL_POLICIES = ("ask", "allow", "deny")
+RUNTIMES = ("api", "claude-code")
 CONFIG_NAME = "company.toml"
 STATE_DIR = ".tinyco"
 
@@ -27,6 +28,9 @@ class AgentSpec:
     effort: str = "high"
     budget_usd: float | None = None
     max_turns: int = 40
+    runtime: str = "api"  # api | claude-code
+    command: str = "claude"  # executable for external runtimes
+    web: bool = False  # server-side web search + fetch (API runtime)
 
 
 @dataclass
@@ -122,6 +126,9 @@ def parse(data: dict, root: Path) -> Company:
         effort = a.get("effort", "high")
         if effort not in EFFORTS:
             raise ConfigError(f"agents.{name}.effort must be one of {', '.join(EFFORTS)}")
+        runtime = a.get("runtime", "api")
+        if runtime not in RUNTIMES:
+            raise ConfigError(f"agents.{name}.runtime must be one of {', '.join(RUNTIMES)}")
         budget = a.get("budget_usd")
         agents[name] = AgentSpec(
             name=name,
@@ -132,6 +139,9 @@ def parse(data: dict, root: Path) -> Company:
             effort=effort,
             budget_usd=float(budget) if budget is not None else None,
             max_turns=int(a.get("max_turns", 40)),
+            runtime=runtime,
+            command=a.get("command", "claude"),
+            web=bool(a.get("web", False)),
         )
 
     roots = [a.name for a in agents.values() if a.reports_to is None]
