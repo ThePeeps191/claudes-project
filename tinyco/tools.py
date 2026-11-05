@@ -223,9 +223,22 @@ def web_tools(model: str) -> list[dict]:
     return [{"type": "web_search_20250305", "name": "web_search"}, {"type": "web_fetch_20250910", "name": "web_fetch"}]
 
 
+def mcp_toolsets(agent) -> list[dict]:
+    """One mcp_toolset per remote MCP server; an allowlist turns every other tool off."""
+    sets = []
+    for m in getattr(agent, "mcp", None) or []:
+        ts: dict = {"type": "mcp_toolset", "mcp_server_name": m["name"]}
+        if m.get("tools"):
+            ts["default_config"] = {"enabled": False}
+            ts["configs"] = {t: {"enabled": True} for t in m["tools"]}
+        sets.append(ts)
+    return sets
+
+
 def tools_for(agent) -> list[dict]:
     """The tool list for an agent: the same for every call it makes (prompt-cache friendly)."""
-    return TOOLS + web_tools(agent.model) if agent.web else TOOLS
+    extra = (web_tools(agent.model) if agent.web else []) + mcp_toolsets(agent)
+    return TOOLS + extra if extra else TOOLS
 
 
 _SCHEMAS = {t["name"]: t["input_schema"] for t in TOOLS}

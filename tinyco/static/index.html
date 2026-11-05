@@ -275,6 +275,7 @@ function describe(e) {
     case "reopened": return ["", [`↺ ${t} reopened${d.guidance ? ": " + d.guidance : ""}`]];
     case "routine_fired": return ["", [`⟳ routine ${d.routine} → ${t}`]];
     case "routine_skipped": return ["dim", [`⟳ routine ${d.routine} skipped: ${d.why}`]];
+    case "mcp_call": return ["", ["🔌 ", A(), ` used ${d.tool}`]];
     case "web_search": return ["dim", ["🔎 ", A(), ` searched: ${d.query || ""}`]];
     case "web_fetch": return ["dim", ["↧ ", A(), ` fetched ${d.url || ""}`]];
     case "committed": return ["dim", [`⎇ committed ${d.sha} as `, A()]];

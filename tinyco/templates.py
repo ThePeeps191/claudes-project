@@ -162,6 +162,13 @@ marketing/. Ground every claim in the research and follow the voice and position
 the company notes. Plain and specific beats clever.
 \"\"\"
 
+# Give the marketer real tools through a remote MCP server (token read from your environment):
+# [[agents.marketer.mcp]]
+# name = "notion"
+# url = "https://mcp.notion.com/mcp"
+# token_env = "NOTION_TOKEN"
+# tools = ["notion-search", "notion-create-pages"]
+
 [agents.designer]
 title = "Web Designer"
 reports_to = "ceo"

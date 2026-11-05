@@ -296,7 +296,10 @@ class Runner:
                 self.store.event("thinking", name, task.id, text=turn.thinking[:2000])
             for sc in turn.server_calls:
                 inp = sc.input if isinstance(sc.input, dict) else {}
-                self.store.event(sc.name, name, task.id, query=inp.get("query"), url=inp.get("url"))
+                if sc.name.startswith("mcp:"):
+                    self.store.event("mcp_call", name, task.id, tool=sc.name[4:], input=_brief_input(inp))
+                else:
+                    self.store.event(sc.name, name, task.id, query=inp.get("query"), url=inp.get("url"))
             if turn.text:
                 self.store.event("said", name, task.id, text=turn.text[:4000])
             messages.append({"role": "assistant", "content": turn.content})
