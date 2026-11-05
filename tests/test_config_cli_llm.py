@@ -71,7 +71,7 @@ def test_cli_init_goal_status_inbox(tmp_path, capsys, monkeypatch):
     assert main(["task", "T1"]) == 0
     assert "`true`" in capsys.readouterr().out
     assert main(["org"]) == 0
-    assert "engineer" in capsys.readouterr().out
+    assert "researcher" in capsys.readouterr().out
     assert main(["log"]) == 0
     assert main(["cancel", "1"]) == 0
     assert "Cancelled T1" in capsys.readouterr().out

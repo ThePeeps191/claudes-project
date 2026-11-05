@@ -12,7 +12,7 @@ import re
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_notes_agent ON notes(agent);
 """
 
 # Columns added after 0.1.0, applied to existing databases on open.
-MIGRATIONS = (("tasks", "title_key", "TEXT NOT NULL DEFAULT ''"),)
+MIGRATIONS = (
+    ("tasks", "title_key", "TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "criteria", "TEXT NOT NULL DEFAULT '[]'"),
+)
 POST_MIGRATION = "CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(parent_id, title_key);"
 
 OPEN = ("todo", "in_progress", "in_review", "blocked")
@@ -100,6 +103,7 @@ class Task:
     blocked_on: str | None
     created_at: float
     updated_at: float
+    criteria: list[str] = field(default_factory=list)  # plain-language acceptance criteria a reviewer judges
 
     @property
     def ref(self) -> str:
@@ -244,6 +248,7 @@ class Store:
         d = dict(row)
         d.pop("title_key", None)
         d["checks"] = json.loads(d["checks"])
+        d["criteria"] = json.loads(d.get("criteria") or "[]")
         return Task(**d)
 
     def create_task(
@@ -255,11 +260,12 @@ class Store:
         parent_id: int | None = None,
         checks: list[str] | None = None,
         reviewer: str | None = None,
+        criteria: list[str] | None = None,
     ) -> Task:
         now = time.time()
         cur = self.db.execute(
             "INSERT INTO tasks (parent_id, title, title_key, description, assignee, creator, checks, reviewer,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " created_at, updated_at, criteria) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 parent_id,
                 title,
@@ -271,6 +277,7 @@ class Store:
                 reviewer,
                 now,
                 now,
+                json.dumps(criteria or []),
             ),
         )
         return self.task(cur.lastrowid)  # type: ignore[return-value]
@@ -345,6 +352,8 @@ class Store:
             fields["checks"] = json.dumps(fields["checks"])
         if "title" in fields:
             fields["title_key"] = normalize_title(fields["title"])
+        if "criteria" in fields:
+            fields["criteria"] = json.dumps(fields["criteria"])
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k} = ?" for k in fields)
         self.db.execute(f"UPDATE tasks SET {cols} WHERE id = ?", (*fields.values(), task_id))

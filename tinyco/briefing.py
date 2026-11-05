@@ -25,11 +25,11 @@ Org chart:
 
 How work happens here:
 - Work is organized as tasks (T1, T2, ...). You're woken when something needs your attention, and each wake-up starts fresh, so the briefing and your notes are your memory. Use `note` to save anything you'll want next time.
-- A task is finished only when its checks pass and its reviewer (if any) approves. Call `submit` to run the checks. If they fail you'll see the output; fix the work and submit again. Repeated failures get escalated to whoever assigned the task.
-- When you delegate with `create_task`, write a clear description and give it checks that exit 0 only when the work is right (usually tests). Vague tasks get vague work. After delegating, end your turn: you'll be woken when subtasks finish, and nobody is billed while you wait.
+- A task is finished only when its checks (if any) pass and its reviewer (if any) approves it against its acceptance criteria. Call `submit` when the work is done; it runs the checks. If something fails you'll get the details back; fix the work and submit again. Repeated failures get escalated to whoever assigned the task.
+- When you delegate with `create_task`, write a clear description and a definition of done: acceptance criteria that are specific enough to pass or fail, and check commands where something can be verified mechanically. Vague tasks get vague work. After delegating, end your turn: you'll be woken when subtasks finish, and nobody is billed while you wait.
 - Do the work in front of you and then end your turn. Don't wait or poll.
 - When several tool calls don't depend on each other (reading a few files, writing several files), make them together in one turn rather than one per turn.
-- All files live in a shared workspace; paths are relative to its root. If something only a human can decide is blocking you, use `ask_human`.
+- Deliverables are files in a shared workspace (documents, pages, code, data); paths are relative to its root. If something only a human can decide is blocking you, use `ask_human`.
 """
 
 REASON_TEXT = {
@@ -224,8 +224,14 @@ def describe_task(office: Office, t: Task) -> str:
         lines.append("Part of: " + " → ".join(f"{c.ref} {c.title}" for c in chain))
     if t.description:
         lines += ["", t.description.strip()]
-    lines += ["", "Checks (all must exit 0, run from the workspace root):"]
-    lines += [f"- `{c}`" for c in t.checks] if t.checks else ["- (none; the reviewer decides)"]
+    if t.criteria:
+        lines += ["", f"Acceptance criteria ({t.reviewer} judges each one):"]
+        lines += [f"{i}. {c}" for i, c in enumerate(t.criteria, 1)]
+    if t.checks:
+        lines += ["", "Checks (all must exit 0, run from the workspace root):"]
+        lines += [f"- `{c}`" for c in t.checks]
+    elif not t.criteria:
+        lines += ["", "Definition of done: the reviewer's judgement (no checks or criteria)."]
     if t.summary:
         lines += ["", f"Latest submission summary: {t.summary}"]
     lines += _last_failure(office, t)

@@ -78,8 +78,13 @@ def cmd_init(args) -> int:
     )
     if git_ready:
         print("Initialized a git repo in workspace/: finished tasks are committed with the agent as author.")
-    print("Next:")
-    print('  tinyco goal "Build a CLI that converts CSV files to JSON" --check "python -m pytest -q"')
+    print("Next, give the company a goal and say what done means:")
+    if args.template in ("software", "startup", "solo"):
+        print('  tinyco goal "Add CSV export to the reports page" --check "python -m pytest -q"')
+    else:
+        print('  tinyco goal "Launch our invoicing app to freelance designers" \\')
+        print('      -a "Competitor research with sourced prices" -a "A landing page and a launch email" \\')
+        print("      --review human")
     print("  tinyco run")
     return 0
 
@@ -94,14 +99,19 @@ def cmd_goal(args) -> int:
             print(f"tinyco: can't read {args.file}: {e}", file=sys.stderr)
             return 1
     try:
-        t = office.start_goal(args.title, description, args.check, args.review)
+        t = office.start_goal(args.title, description, args.check, args.review, args.criteria)
     except OfficeError as e:
         print(f"tinyco: {e}", file=sys.stderr)
         return 1
     style = Style(use_color())
     print(f"{style.bold(t.ref)} {t.title} → {style.agent(t.assignee)}")
     if not t.checks and not t.reviewer:
-        print(style.dim("tip: add --check 'cmd' (e.g. a test command) so 'done' means something you can verify"))
+        print(
+            style.dim(
+                'tip: say what "done" means with --criteria "..." --review human (or an agent), '
+                "and/or --check 'cmd' for things a command can verify"
+            )
+        )
     print(style.dim("Run the company with: tinyco run"))
     return 0
 
@@ -280,6 +290,8 @@ def cmd_inbox(args) -> int:
             print(f"{style.bold(t.ref)} {t.title}  {style.yellow('awaiting your review')}")
             if t.summary:
                 print(f"   summary: {t.summary}")
+            for i, c in enumerate(t.criteria, 1):
+                print(f"   {i}. {c}")
             print(style.dim(f'   tinyco approve {t.id}   |   tinyco reject {t.id} "what to change"'))
         else:
             print(f"{style.bold(t.ref)} {t.title}  {style.yellow((t.blocked_on or '').removeprefix('human: '))}")
@@ -369,7 +381,13 @@ def cmd_demo(args) -> int:
     print(style.dim("and nothing is billed. Everything else is real: files are written, commands and checks run,"))
     print(style.dim("and the company rules apply exactly as they do with Claude.\n"))
     try:
-        office, _ = run_demo(target, delay=0 if args.fast else 0.35, force=args.force, feed=Feed(style))
+        office, _ = run_demo(
+            target,
+            delay=0 if args.fast else 0.35,
+            force=args.force,
+            feed=Feed(style),
+            kind="code" if args.code else "launch",
+        )
     except FileExistsError as e:
         print(f"tinyco: {e}", file=sys.stderr)
         return 1
@@ -380,9 +398,11 @@ def cmd_demo(args) -> int:
     print("Look around:")
     print(f"  cd {rel} && tinyco status       # the board")
     print("  tinyco dashboard                  # the same company in your browser")
-    print("  ls workspace/                     # the code the agents wrote")
+    print("  ls workspace/                     # what the agents made")
+    if office.inbox():
+        print(f"  tinyco inbox && tinyco approve {office.inbox()[0].id}   # the goal is waiting for you")
     print()
-    print('Run a real company: tinyco init && tinyco goal "..." && tinyco run')
+    print('Run a real company: tinyco init && tinyco goal "..." --review human && tinyco run')
     return 0
 
 
@@ -484,7 +504,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", metavar="command")
 
     s = sub.add_parser("init", help="create company.toml from a template")
-    s.add_argument("--template", "-t", choices=sorted(TEMPLATES), default="startup")
+    s.add_argument(
+        "--template",
+        "-t",
+        choices=sorted(TEMPLATES),
+        default="launch",
+        help="launch (default): CEO, researcher, marketer, designer; studio: content; "
+        "software: CEO, engineer, reviewer; solo; research",
+    )
     s.add_argument("--name", help="company name")
     s.add_argument("--force", action="store_true", help="overwrite an existing company.toml")
     s.set_defaults(fn=cmd_init)
@@ -493,6 +520,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("title")
     s.add_argument("--description", "-d", help="more detail for the goal")
     s.add_argument("--file", "-f", metavar="PATH", help="read the goal's details from a file (e.g. a spec)")
+    s.add_argument(
+        "--criteria",
+        "-a",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="an acceptance criterion the reviewer must judge (repeatable; needs --review)",
+    )
     s.add_argument(
         "--check",
         "-c",
@@ -572,6 +607,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?", default="tinyco-demo", help="where to create the demo company")
     s.add_argument("--fast", action="store_true", help="no pauses")
     s.add_argument("--force", action="store_true", help="reuse a non-empty directory")
+    s.add_argument("--code", action="store_true", help="the software demo instead of the product launch")
     s.set_defaults(fn=cmd_demo)
 
     s = sub.add_parser("routines", help="list scheduled routines and when they run next")

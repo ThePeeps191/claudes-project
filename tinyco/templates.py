@@ -112,4 +112,126 @@ notes when claims aren't backed up.
 """
 '''
 
-TEMPLATES = {"startup": STARTUP, "solo": SOLO, "research": RESEARCH}
+LAUNCH = """\
+# A small company that takes products from idea to launch: research the market,
+# decide what to say, and ship the assets. Edit freely.
+
+[company]
+name = "{name}"
+mission = "Take products from idea to launch: know the market, say it clearly, ship the assets."
+budget_usd = 15.0         # hard cap, checked before every model call
+budget_period = "total"   # or day / week / month for a company that keeps running
+workspace = "workspace"   # deliverables live here: research/, marketing/, site/, ...
+shell = "ask"             # ask | allow | deny: whether agents may run shell commands
+parallel = 2              # agents that may work at the same time
+
+[agents.ceo]
+title = "CEO"
+effort = "high"
+budget_usd = 4.0
+instructions = \"\"\"
+You own the goals the human gives the company. Break each goal into workstreams for
+your team and delegate them in a sensible order (research before messaging, messaging
+before the landing page). Give every task acceptance criteria that are specific enough
+to pass or fail: numbers, named deliverables, file paths. You review your team's work
+by default, so judge it strictly against those criteria. Share decisions everyone must
+follow (audience, price, positioning, tone, file layout) with note(shared=true).
+Before you submit a goal, read the deliverables together and make sure they agree.
+\"\"\"
+
+[agents.researcher]
+title = "Market Researcher"
+reports_to = "ceo"
+effort = "medium"
+budget_usd = 4.0
+web = true
+instructions = \"\"\"
+Research markets, competitors, customers and pricing with web search and fetch.
+Cite a URL for every factual claim, say how current it is, and keep facts apart from
+your own inferences. Write findings as Markdown under research/.
+\"\"\"
+
+[agents.marketer]
+title = "Marketing Lead"
+reports_to = "ceo"
+effort = "medium"
+budget_usd = 4.0
+instructions = \"\"\"
+Write positioning, messaging, launch plans, emails and social posts as Markdown under
+marketing/. Ground every claim in the research and follow the voice and positioning in
+the company notes. Plain and specific beats clever.
+\"\"\"
+
+[agents.designer]
+title = "Web Designer"
+reports_to = "ceo"
+effort = "medium"
+budget_usd = 3.0
+instructions = \"\"\"
+Build landing pages and small sites as self-contained HTML and CSS under site/ (no
+build step, no external dependencies unless asked). Accessible, fast and readable on
+a phone. Copy comes from marketing/; don't invent claims or prices.
+\"\"\"
+"""
+
+STUDIO = """\
+# A content studio: an editor who plans, a writer, a researcher and a social lead.
+# Uncomment the routine to publish on a schedule with `tinyco run --watch`.
+
+[company]
+name = "{name}"
+mission = "Publish useful, well-sourced writing for a specific audience, on schedule."
+budget_usd = 10.0
+budget_period = "month"
+workspace = "workspace"
+shell = "ask"
+parallel = 2
+
+[agents.editor]
+title = "Editor-in-Chief"
+effort = "high"
+instructions = \"\"\"
+Own the editorial plan. For each piece, commission research first, then the draft,
+then social posts. Give every task acceptance criteria (length, audience, sources,
+structure, call to action) and review against them. Keep the voice and audience in
+shared notes so everyone writes the same publication.
+\"\"\"
+
+[agents.researcher]
+title = "Researcher"
+reports_to = "editor"
+effort = "medium"
+web = true
+instructions = "Find facts, data and examples with web search. Cite every source. Write briefs under research/."
+
+[agents.writer]
+title = "Writer"
+reports_to = "editor"
+effort = "medium"
+instructions = \"\"\"
+Write drafts under drafts/ from the research briefs. Every factual claim must trace to
+a cited source in the brief. Write for the audience in the company notes.
+\"\"\"
+
+[agents.social]
+title = "Social Lead"
+reports_to = "editor"
+effort = "low"
+instructions = "Turn published pieces into posts for each channel under social/, faithful to the piece."
+
+# [[routines]]
+# name = "Weekly issue"
+# every = "1w"
+# at = "09:00"
+# goal = "Plan, research, write and package this week's issue"
+# review = "human"
+"""
+
+TEMPLATES = {
+    "launch": LAUNCH,
+    "studio": STUDIO,
+    "software": STARTUP,
+    "startup": STARTUP,  # older name for "software"
+    "solo": SOLO,
+    "research": RESEARCH,
+}

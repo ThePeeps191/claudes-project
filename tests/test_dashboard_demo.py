@@ -13,7 +13,7 @@ from tinyco.demo import run_demo
 
 
 def test_demo_builds_working_code_with_a_rejected_review(tmp_path):
-    office, model = run_demo(tmp_path / "demo", delay=0)
+    office, model = run_demo(tmp_path / "demo", delay=0, kind="code")
     assert model.remaining() == {}
     statuses = {t.id: t.status for t in office.store.tasks()}
     assert statuses == {1: "done", 2: "done", 3: "done"}
@@ -34,7 +34,7 @@ def test_demo_refuses_non_empty_dir(tmp_path):
 
 @pytest.fixture
 def server(tmp_path):
-    run_demo(tmp_path / "co", delay=0)
+    run_demo(tmp_path / "co", delay=0, kind="code")
     srv = serve(load(tmp_path / "co"), port=0)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -95,3 +95,20 @@ def test_dashboard_actions_require_header(server):
     assert code == 200
     code, body = _post(server + "/api/reply", {"task_id": 1})
     assert code == 400
+
+
+def test_launch_demo_is_a_business_run_ending_with_the_human(tmp_path):
+    office, model = run_demo(tmp_path / "launch", delay=0)
+    assert model.remaining() == {}
+    statuses = {t.id: t.status for t in office.store.tasks()}
+    assert statuses == {1: "in_review", 2: "done", 3: "done", 4: "done"}
+    assert [t.id for t in office.inbox()] == [1]
+    assert office.get(1).criteria and office.get(2).criteria
+    ws = office.company.workspace
+    for f in ("research/competitors.md", "marketing/messaging.md", "marketing/launch-email.md", "site/index.html"):
+        assert (ws / f).exists(), f
+    reviews = office.store.events(task_id=2, kinds=("reviewed",))
+    assert [r["data"]["approved"] for r in reviews] == [False, True]  # sent back once for an unsourced price
+    assert "streakbox.example" in (ws / "research/competitors.md").read_text()
+    office.human_review(1, True)
+    assert office.get(1).status == "done"

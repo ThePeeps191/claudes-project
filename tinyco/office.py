@@ -24,6 +24,10 @@ OUTPUT_TAIL = 4000
 Approver = Callable[[str, str], bool]
 
 
+def _clean(items: list[str] | None) -> list[str]:
+    return [str(c).strip() for c in (items or []) if c and str(c).strip()]
+
+
 class OfficeError(Exception):
     """An operation was not allowed; the message is shown to the caller."""
 
@@ -97,15 +101,32 @@ class Office:
     # -- goals & tasks ----------------------------------------------------------
 
     def start_goal(
-        self, title: str, description: str = "", checks: list[str] | None = None, reviewer: str | None = None
+        self,
+        title: str,
+        description: str = "",
+        checks: list[str] | None = None,
+        reviewer: str | None = None,
+        criteria: list[str] | None = None,
     ) -> Task:
         top = self.company.top.name
         if reviewer is not None:
             self._check_agent(reviewer, allow_human=True)
             if reviewer == top:
                 raise OfficeError(f"the reviewer must be someone other than {top}, who works on the goal")
-        t = self.store.create_task(title, top, HUMAN, description, None, checks or [], reviewer)
-        self.store.event("goal_created", HUMAN, t.id, title=title, assignee=top, checks=t.checks)
+        criteria = _clean(criteria)
+        if criteria and reviewer is None:
+            raise OfficeError("acceptance criteria need someone to judge them: add a reviewer (human or an agent)")
+        t = self.store.create_task(title, top, HUMAN, description, None, _clean(checks), reviewer, criteria)
+        self.store.event(
+            "goal_created",
+            HUMAN,
+            t.id,
+            title=title,
+            assignee=top,
+            checks=t.checks,
+            criteria=criteria,
+            reviewer=reviewer,
+        )
         self.store.wake(top, t.id, "assigned", by=HUMAN)
         return t
 
@@ -118,6 +139,7 @@ class Office:
         description: str = "",
         checks: list[str] | None = None,
         reviewer: str | None = None,
+        criteria: list[str] | None = None,
     ) -> str:
         parent = self.get(parent_id)
         if by != HUMAN and parent.assignee != by:
@@ -128,15 +150,20 @@ class Office:
         if not self.can_assign(by, assignee):
             allowed = sorted(self.company.subtree(by) | {by})
             raise OfficeError(f"{assignee} doesn't report to you; you can assign to: {', '.join(allowed)}")
-        checks = [c.strip() for c in (checks or []) if c and c.strip()]
+        checks = _clean(checks)
+        criteria = _clean(criteria)
+        if criteria and reviewer is None and by not in (HUMAN, assignee):
+            reviewer = by  # whoever asked for the work judges it against the criteria
         if reviewer is not None:
             self._check_agent(reviewer, allow_human=True)
             if reviewer == assignee:
                 raise OfficeError("the reviewer must be someone other than the assignee")
+        if criteria and reviewer is None:
+            raise OfficeError("acceptance criteria need someone to judge them: add a reviewer")
         if not checks and reviewer is None:
             raise OfficeError(
-                "every task needs a definition of done: give at least one check command "
-                "(exits 0 only when the work is right, e.g. a test) or a reviewer"
+                "every task needs a definition of done: acceptance criteria for a reviewer to judge, "
+                "check commands that exit 0 only when the work is right, or both"
             )
         depth = len(self.store.ancestry(parent.id))
         if depth >= 6:
@@ -144,9 +171,17 @@ class Office:
         dup = self.store.find_open_sibling(parent.id, title)
         if dup is not None:
             return f"{dup.ref} already exists with this title (assigned to {dup.assignee}, {dup.status}); not creating a duplicate."
-        t = self.store.create_task(title, assignee, by, description, parent.id, checks, reviewer)
+        t = self.store.create_task(title, assignee, by, description, parent.id, checks, reviewer, criteria)
         self.store.event(
-            "task_created", by, t.id, title=title, assignee=assignee, parent=parent.id, checks=checks, reviewer=reviewer
+            "task_created",
+            by,
+            t.id,
+            title=title,
+            assignee=assignee,
+            parent=parent.id,
+            checks=checks,
+            reviewer=reviewer,
+            criteria=criteria,
         )
         if assignee != by:
             self.store.wake(assignee, t.id, "assigned", by=by)
@@ -164,6 +199,7 @@ class Office:
         checks: list[str] | None = None,
         reviewer: str | None = None,
         cancel: bool = False,
+        criteria: list[str] | None = None,
     ) -> str:
         t = self.get(task_id)
         manager = self.owner_of_parent(t)
@@ -186,7 +222,9 @@ class Office:
         if description is not None:
             fields["description"] = description
         if checks is not None:
-            fields["checks"] = [c.strip() for c in checks if c.strip()]
+            fields["checks"] = _clean(checks)
+        if criteria is not None:
+            fields["criteria"] = _clean(criteria)
         if reviewer is not None:
             if reviewer.strip().lower() in ("", "none"):
                 fields["reviewer"] = None
@@ -204,6 +242,8 @@ class Office:
             raise OfficeError("nothing to change")
         new_checks = fields.get("checks", t.checks)
         new_reviewer = fields["reviewer"] if "reviewer" in fields else t.reviewer
+        if fields.get("criteria", t.criteria) and not new_reviewer:
+            raise OfficeError("acceptance criteria need a reviewer to judge them")
         if not new_checks and not new_reviewer:
             raise OfficeError("a task must keep a definition of done: at least one check or a reviewer")
         if new_reviewer is not None and new_reviewer == new_assignee:
@@ -308,13 +348,22 @@ class Office:
         n = len(results)
         return f"All {n} check{'s' if n != 1 else ''} passed. {t.ref} is done. End your turn."
 
-    def review(self, by: str, task_id: int, approve: bool, notes: str = "") -> str:
+    def review(self, by: str, task_id: int, approve: bool, notes: str = "", verdicts: list[dict] | None = None) -> str:
         t = self.get(task_id)
         if t.reviewer != by:
             raise OfficeError(f"you are not the reviewer of {t.ref}")
         if t.status != "in_review":
             raise OfficeError(f"{t.ref} is {t.status}, not waiting for review")
-        self.store.event("reviewed", by, t.id, approved=approve, notes=notes)
+        if t.criteria and (by != HUMAN or verdicts):
+            verdicts = self._check_verdicts(t, verdicts or [], approve)
+            failing = [v for v in verdicts if not v["passed"]]
+            if failing:
+                lines = [
+                    f"Criterion {v['criterion']} not met ({t.criteria[v['criterion'] - 1]}): {v['reason']}"
+                    for v in failing
+                ]
+                notes = "\n".join(lines + ([notes] if notes.strip() else []))
+        self.store.event("reviewed", by, t.id, approved=approve, notes=notes, verdicts=verdicts or [])
         if approve:
             self._close(t.id, "done", by)
             return f"Approved {t.ref}; it's done."
@@ -325,6 +374,35 @@ class Office:
             return f"Rejected {t.ref}. It has now failed {attempts} times and was escalated."
         self.store.wake(t.assignee, t.id, "changes_requested", by=by, notes=notes)
         return f"Sent {t.ref} back to {t.assignee} with your notes."
+
+    @staticmethod
+    def _check_verdicts(t: Task, verdicts: list[dict], approve: bool) -> list[dict]:
+        """A review of a task with acceptance criteria must judge every criterion, once."""
+        n = len(t.criteria)
+        seen: dict[int, dict] = {}
+        for v in verdicts:
+            try:
+                i = int(v["criterion"])
+            except (KeyError, TypeError, ValueError):
+                raise OfficeError("each verdict needs a criterion number, passed and a reason") from None
+            if not 1 <= i <= n:
+                raise OfficeError(f"{t.ref} has criteria 1-{n}; there is no criterion {i}")
+            if not str(v.get("reason", "")).strip():
+                raise OfficeError(f"give a reason for your verdict on criterion {i}")
+            seen[i] = {"criterion": i, "passed": bool(v.get("passed")), "reason": str(v["reason"]).strip()}
+        missing = [i for i in range(1, n + 1) if i not in seen]
+        if missing:
+            listed = "; ".join(f"{i}. {t.criteria[i - 1]}" for i in missing)
+            raise OfficeError(f"judge every acceptance criterion; missing verdicts for: {listed}")
+        verdicts = [seen[i] for i in range(1, n + 1)]
+        failing = [v["criterion"] for v in verdicts if not v["passed"]]
+        if approve and failing:
+            raise OfficeError(
+                f"you marked criteria {', '.join(map(str, failing))} as not met; reject with those notes instead"
+            )
+        if not approve and not failing:
+            raise OfficeError("every criterion passed; approve it, or mark the criterion that isn't met")
+        return verdicts
 
     def comment(self, by: str, task_id: int, text: str, notify: list[str] | None = None) -> str:
         t = self.get(task_id)
